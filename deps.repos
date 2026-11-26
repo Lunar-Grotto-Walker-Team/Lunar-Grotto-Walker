@@ -17,4 +17,4 @@ repositories:
   vendor:
     type: git
     url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor.git
-    version: eb0338776eb86808b8044c758de0990b61a97926
+    version: 4b7448742f12ef92b061a9fa67eccc470384ec92

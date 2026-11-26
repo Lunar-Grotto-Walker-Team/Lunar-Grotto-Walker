@@ -24,14 +24,29 @@
 
 ## 2. 第三方包（来自 vendor 仓库）
 
+vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），**未改动的**由 vendor 的
+`deps.repos` 拉取。主仓库只认 vendor 的版本，不关心它的内部分级。
+
+### 2.1 vendor 入库的包（已修改）
+
 | 包 | 上游 | 版本 | 本仓库用途 |
 |---|---|---|---|
 | `vendor/src/livox_ros_driver2` | [Livox-SDK](https://github.com/Livox-SDK/livox_ros_driver2) | master @ 2144554（1.2.8） | Mid-360S 点云驱动 |
-| `vendor/src/Livox-SDK2` | [Livox-SDK](https://github.com/Livox-SDK/Livox-SDK2) | v1.5.2 | 驱动底层 SDK |
 | `vendor/src/unitree_ros2` | [unitreerobotics](https://github.com/unitreerobotics/unitree_ros2) | v0.3.0 | `unitree_go` 消息 + CycloneDDS 配置 |
 | `vendor/src/BehaviorTree.ROS2` | [BehaviorTree](https://github.com/BehaviorTree/BehaviorTree.ROS2) | 0.3.0 | 行为树 ROS2 节点（含 deadline 修复） |
+| `vendor/src/elevation_mapping` | [Muhammad540](https://github.com/Muhammad540/elevation_mapping) | main @ 710fffc | 高程图（激光径向距离门 + Go2 配置） |
+| `vendor/src/kindr` | [ANYbotics](https://github.com/ANYbotics/kindr) | master @ 2446444 | elevation_mapping 依赖（CMake 版本适配） |
+| `vendor/src/kindr_ros` | [SivertHavso](https://github.com/SivertHavso/kindr_ros) | galactic @ af5667c | elevation_mapping 依赖（rosidl 依赖补齐） |
+
+### 2.2 vendor 导入的包（未修改）
+
+| 包 | 上游 | 版本 | 本仓库用途 |
+|---|---|---|---|
+| `vendor/src/Livox-SDK2` | [Livox-SDK](https://github.com/Livox-SDK/Livox-SDK2) | v1.5.2 | 驱动底层 SDK |
 | `vendor/src/realsense-ros` | [IntelRealSense](https://github.com/IntelRealSense/realsense-ros) | 4.58.3 | 相机驱动（感知链路） |
 | `vendor/src/librealsense` | [IntelRealSense](https://github.com/IntelRealSense/librealsense) | v2.58.3 | 相机底层 SDK |
+
+`grid_map` 不在 vendor 里 —— 直接用 apt 的 `ros-humble-grid-map-*`（2.0.1）。
 
 ## 3. 系统级依赖（apt）
 
@@ -53,12 +68,13 @@ sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
 
 ## 4. 手工安装到 `/usr/local` 的 SDK
 
-这两个不是 ROS 包，必须 `make install` 到系统目录，ROS 驱动才能链接到。
+以下三个不是普通 ROS 包（或需要特殊 CMake 参数），必须在 **vendor 仓库里**
+`make install` 到系统目录，后面的 ROS 包才能链接到。
 
 ### 4.1 Livox SDK2
 
 ```bash
-cd src/vendor/src/Livox-SDK2
+cd src/Livox-SDK2
 mkdir -p build && cd build && cmake .. && make -j$(nproc)
 sudo make install && sudo ldconfig
 ```
@@ -73,7 +89,7 @@ sudo make install && sudo ldconfig
 ```bash
 sudo apt install gcc-10 g++-10
 export PATH=/usr/local/cuda/bin:$PATH
-cd src/vendor/src/librealsense
+cd src/librealsense
 mkdir -p build && cd build
 cmake .. \
   -DCMAKE_INSTALL_PREFIX=/usr/local \
@@ -88,32 +104,62 @@ cmake .. \
 make -j$(nproc) && sudo make install && sudo ldconfig
 ```
 
-## 5. 完整安装流程
+### 4.3 kindr（elevation_mapping 依赖）
 
 ```bash
-# 1) 拉取第三方包（vendor 仓库，版本已在 deps.repos 固定）
-vcs import src < deps.repos
+cd src/kindr
+mkdir -p build && cd build
+cmake .. -DUSE_CMAKE=true
+sudo make install && sudo ldconfig
+touch ../../kindr/COLCON_IGNORE   # 不让 colcon 重复编译
+```
 
-# 2) 系统依赖
-sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
-                 ros-humble-message-filters libpcl-dev libeigen3-dev libboost-all-dev
+## 5. 部署（两阶段）
 
-# 3) 两个 /usr/local SDK（见第 4 节）
+主仓库依赖 vendor 仓库，**先部署 vendor，再部署主仓库**。
 
-# 4) livox_ros_driver2 的 ROS2 换名（构建步骤，不是源码改动）
-cd src/vendor/src/livox_ros_driver2
+### 第一阶段：vendor 仓库
+
+```bash
+git clone https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor.git
+cd Lunar-Grotto-Walker-Vendor
+
+vcs import src < deps.repos      # 拉 Livox-SDK2 / librealsense / realsense-ros
+
+# ① SDK 层（第 4 节，逐个 make install）
+# ② livox_ros_driver2 的 ROS2 换名（构建步骤，不是源码改动）
+cd src/livox_ros_driver2
 rm -f package.xml && cp package_ROS2.xml package.xml
 cp -rf launch_ROS2/ launch/
-cd -
+cd ../..
 
-# 5) 构建
 colcon build --symlink-install --parallel-workers 4
+source install/setup.bash
 ```
+
+### 第二阶段：主仓库
+
+```bash
+git clone https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker.git
+cd Lunar-Grotto-Walker
+sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
+                 ros-humble-message-filters ros-humble-grid-map-* \
+                 libpcl-dev libeigen3-dev libboost-all-dev
+colcon build --symlink-install --parallel-workers 4
+source install/setup.bash
+```
+
+**环境变量**：两边的 `install/setup.bash` 都要 source，顺序 vendor → 主仓库。
+CycloneDDS 配置（`eth10` + `AllowMulticast=spdp`）由 vendor 的
+`src/unitree_ros2/setup.sh` 提供。
+
+> 也可以把 vendor 一次性拉进主仓库（`vcs import src < deps.repos` → `src/vendor/`），
+> 但这样两个工作区会重复编译，只建议在没有独立 vendor 副本时使用。
 
 > **不要用 livox 官方的 `./build.sh humble`**：它会删掉整个工作区的 `build/ install/`、
 > 不带 `--packages-select` 编所有包、并在收尾删掉 `launch/`。
-> 本仓库 `src/` 下还有 `librealsense` 等需要特殊 cmake 参数的包，会被拖进无参数编译。
-> 详见 vendor 仓库 `livox_ros_driver2/UPSTREAM.md`。
+> vendor 的 `src/` 下还有 `librealsense`、`realsense-ros` 等需要特殊 cmake 参数的包，
+> 会被拖进无参数编译。详见 vendor 仓库 `livox_ros_driver2/UPSTREAM.md`。
 
 ## 6. 环境变量
 
