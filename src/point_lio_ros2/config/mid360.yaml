@@ -1,0 +1,150 @@
+/**:
+    ros__parameters:
+        # --- 密度相关(这三个键原来看 launch 里的内联字典,现以本文件为唯一出处) ---
+        # 单一出处的理由:ROS 2 的 Node(parameters=[yaml, dict]) 会把二者都变成 --params-file,
+        # 靠后的 dict 静默覆盖 yaml。两边同时写就会出现"改了 yaml 却毫无效果"的陷阱。
+        point_filter_num: 1        # preprocess 每 N 取 1;默认 2 会白砍一半,体素网格本来就会去重
+        filter_size_surf: 0.15     # 单帧扫描体素。0.1 试过:/cloud_registered 涨到 2899(1902→+52%),但 67 个关键帧的并集
+                            # 在下游 0.1 网格上已饱和(/aft_pgo_map 只 +6%),多出来的点是纯重复,白烧 LIO 和 SLC 的 CPU。
+                            # 密度改由下游 vis_map_voxel_leaf_size / accumulator resolution 承担
+        filter_size_map: 0.2       # ikd-tree 内部地图体素
+        # 抓取模式开关话题(std_msgs/Bool,持久性 volatile):
+        #   ros2 topic pub --once /manipulation_mode std_msgs/msg/Bool "{data: true}"
+        # true = 机械臂展开, 打开 preprocess.self_manip_box;false = 收起。
+        manipulation_topic: "/manipulation_mode"
+
+        common:
+            lid_topic: "/livox/lidar"
+            imu_topic: "/livox/imu"
+            con_frame: false # true: if you need to combine several LiDAR frames into one
+            con_frame_num: 1 # the number of frames combined
+            cut_frame: false # true: if you need to cut one LiDAR frame into several subframes
+            cut_frame_time_interval: 0.1 # should be integral fraction of 1 / LiDAR frequency
+            time_lag_imu_to_lidar: 0.0 # Time offset between LiDAR and IMU calibrated by other algorithms, e.g., LI-Init (find in Readme),
+            # the timestamp of IMU is transferred from the current timeline to LiDAR's timeline by subtracting this value
+
+        preprocess:
+            lidar_type: 1      # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR
+            scan_line: 4
+            timestamp_unit: 3   # the unit of time/t field in the PointCloud2 rostopic: 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
+            blind: 0.35 # 近场盲区半径(自雷达光心量起),小于该半径的点不进 pl_surf;preprocess 全程 15 处用它做近场门限
+            # ---- 静态本体盒:去掉狗身/机械臂自己的点 ----
+            # 盒内的点在进 pl_surf 之前就丢掉,所以它们不会进 ikd-tree、不会进
+            # SLC 的关键帧、也不会进 /aft_pgo_map。这一点很关键:下游滤波只能
+            # 删"当前位姿下"的点,而全图是按关键帧累积的,SLC 一旦把机械臂点收进
+            # 关键帧,它就成了永久的鬼影(回环后还会被搬到别处)。
+            # 盒子在 base_link 系:x 前 0.35 / 后 0.35,y 左 0.19 / 右 0.15,
+            # z 上 0.40 / 下 0.17。每个点做一次固定旋转(9 乘 3 加),且先用
+            # 包围半径早退,实测开销可忽略(见下)。
+            #
+            # 2026-11-16 实测 (bags/slope_20261114_132503, 40 帧):
+            #   盒内命中 ~630 个真实点/帧, 但它们全部落在离雷达 0.10-0.22 m 处,
+            #   也就是 blind 0.35 早就丢掉了 -> 这盒子的净新增删除 = 0。
+            # 原因:Go2 本体(躯干+四条腿)整个都在顶置雷达 0.5 m 以内,盒子
+            # (离雷达 0.33-0.65 m)里的可见面只有安装板。
+            # 验证:把 blind 临时改成 0.10 跑一次, 盒子每帧删 602-633 点(与离线
+            # 探针一致) —— 既证明了几何/外参正确, 也说明 blind 0.35 恰好等价于
+            # "盒子 + 几乎没有别的近场点"。
+            # 所以这个盒子现在的作用是"把 blind 抬高到结构性保证",以及给机械臂
+            # 包络留钩子 —— 注意前伸抓取时机械臂会伸到 x=0.35 之外,本盒子
+            # 盖不住,那部分要靠机械臂包络/FK。详见 user-log
+            # 《2026-11-16 本体/机械臂点云:上游静态自滤盒》一节。
+            # 2026-11-16 第二版:平时探测时机械臂会左右扫视找目标,所以上沿从
+            # 0.40 抬到 0.60(离地 0.957 m,仍低于 1.5 m 洞穴顶的 1.19 m),
+            # 右侧(y-)从 -0.15 放宽到 -0.28 容纳扫视摆幅。左侧 0.19 不变。
+            # 该 bag 上盒内命中仍是 0(新加的那块既无本体也无障碍),即改动在
+            # 现在的数据上是零代价;真正效果要等机械臂扫视的数据。
+            # 扫视仍漏点的话就上 FK 胶囊,不要再往大里放 —— 盒子是轴对齐的,
+            # 每放宽一格都会连相邻的真实地形一起吃。
+            self_filter_en: true
+            self_box_min: [-0.35, -0.28, -0.17]   # 后 0.35/右 0.28/下 0.17
+            self_box_max: [0.35, 0.19, 0.60]      # 前 0.35/左 0.19/上 0.60
+            # T^base_link_lidar(雷达系 -> base_link):x,y,z 米,roll,pitch,yaw 度。
+            # 由安装链 base_footprint -> base_link (0,0,0.357)
+            #   -> livox_frame (0.187, 0, 0.0803, pitch +13°)
+            # 得到;它与 mapping.extrinsic_T/R 指向同一个 IMU,互相校验
+            # (pointlio_cloud_relay/test/test_transform.py 里有这个乘积的断言)。
+            # 注意:输出点云仍然留在雷达系,不改成 base_link —— point_lio 及
+            # 下游都按雷达系解释这些点。
+            lidar_to_base: [0.187, 0.0, 0.0803, 0.0, 13.0, 0.0]
+            # ---- 抓取模式包络盒(只在机械臂展开时开) ----
+            # 机械臂前伸抓取会到 x≈1.0 m, 上面那个静态盒盖不住。但把同样大小的
+            # 盒子做成常开不行: 它会把前方 1 m 内、0.2-0.4 m 高的真实障碍一起抹掉
+            # (本 bag 实测: 会多删 ~81 点/帧, 其中绝大部分是狗左侧 y=+0.16..+0.29
+            # 的坡壁), 而且夹爪抓地时和地面同高, 几何上无法区分。
+            #
+            # 只在抓取时开就都解决了: 抓取时狗是静止的, 不需要建图, 瞬时丢掉近场
+            # 可以接受; 而那些被删掉的墙面点在之前的关键帧里已经存在, /aft_pgo_map
+            # 是整图重建的, 不会因为这几秒没看见就消失。反过来, 因为剔除发生在上游,
+            # 抓取期间写下的关键帧本身就是干净的, 机械臂不会变成永久鬼影。
+            #
+            # 打开方式见上面 manipulation_topic。manip_timeout_s 内没收到任何更新
+            # 就自动关(0 = 不超时), 防止信号卡死让狗对近场障碍失明。
+            self_manip_box_en: true
+            self_manip_box_min: [-0.35, -0.33, -0.37]   # 后/右/下(下沿压到地面)
+            self_manip_box_max: [1.00, 0.30, 0.60]      # 前 1 m/左/上
+            # 右侧 -0.30 -> -0.33、上沿 0.45 -> 0.60: 与静态盒的扫视余量对齐,
+            # 否则机械臂在 0.45-0.60 之间那段在抓取时仍会漏进关键帧。
+            manip_timeout_s: 30.0
+            z_max: 2.0         # drop points with z > 2.0 m (lidar frame); 1000 = disabled
+                               # 2026-11-07: 1.0 试过又改回 1.5。corridor bag 实测:
+                               # 1.0 只减 10% 点数 (天花板在 1.5 时已被砍掉), 但上部
+                               # 墙面变少后竖直/姿态约束更弱, 原始 LIO 的 z 摆幅从
+                               # 4.1 m 恶化到 6.5 m, pitch 从 30° 恶化到 43°。
+                               # 2026-11-07 实测"不砍顶部"的代价 (corridor bag, 满链):
+                               # /aft_pgo_map 11.0->14.4 MB (+31%), 点数 +35%,
+                               # 末段 0.63->0.53 Hz (-18%), A 端 RSS +21%。
+                               # 收益: 全图位姿 z 跨度末值 1.97->0.54 m、最大 4.83->1.62 m,
+                               # 高程图填充格 19.1k->23.8k。天花板给了竖直/姿态约束。
+                               # 2026-11-07: 1.5 -> 2.0。洞穴高 1.5 m、雷达离地
+                               # 0.39 m, 洞顶在雷达系 z~+1.11 m; 取 2.0 留出
+                               # ~0.9 m 余量应对狗身俯仰(切面在雷达系, 会随姿态
+                               # 倾斜)和洞顶起伏。
+                               # 注意 2.0 已经基本等于"不砍顶部": corridor bag 实测
+                               # 末帧 14.1 MB, 而不设限是 14.4 MB (只差 2%),
+                               # 走廊天花板(离雷达 ~2 m)被保留了大部分。所以上面
+                               # 那 -18% 的频率代价在洞内同样适用, 不是走廊特例;
+                               # 2.0 实际砍掉的是远距离(20-30 m)天花板被姿态误差
+                               # 甩到 10-15 m 的垃圾点。
+
+        mapping:
+            imu_en: true
+            start_in_aggressive_motion: false # if true, a preknown gravity should be provided in following gravity_init
+            extrinsic_est_en: false # for aggressive motion, set this variable false
+            imu_time_inte: 0.005 # = 1 / frequency of IMU
+            satu_acc: 3.0 # the saturation value of IMU's acceleration. not related to the units
+            satu_gyro: 35.0 # the saturation value of IMU's angular velocity. not related to the units
+            acc_norm: 1.0 # 1.0 for g as unit, 9.81 for m/s^2 as unit of the IMU's acceleration
+            lidar_meas_cov: 0.01 # 0.001
+            acc_cov_output: 500.0
+            gyr_cov_output: 1000.0
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            imu_meas_acc_cov: 0.01 #0.1 # 2
+            imu_meas_omg_cov: 0.01 #0.1 # 2
+            gyr_cov_input: 0.01 # for IMU as input model
+            acc_cov_input: 0.1 # for IMU as input model
+            plane_thr: 0.1 # 0.05, the threshold for plane criteria, the smaller, the flatter a plane
+            match_s: 81.0
+            fov_degree: 360.0
+            det_range: 30.0
+            gravity_align: true # true to align the z axis of world frame with the direction of gravity, and the gravity direction should be specified below
+            gravity: [ 0.0, 0.0, -9.810 ] # [0.0, 9.810, 0.0] # gravity to be aligned
+            gravity_init: [ 0.0, 0.0, -9.810 ] # [0.0, 9.810, 0.0] # # preknown gravity in the first IMU body frame, use when imu_en is false or start from a non-stationary state
+            extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
+            extrinsic_R: [ 1.0, 0.0, 0.0,
+                           0.0, 1.0, 0.0,
+                           0.0, 0.0, 1.0 ]
+
+        odometry:
+            publish_odometry_without_downsample: false
+
+        publish:
+            path_en: true                 # false: close the path output
+            scan_publish_en: true         # false: close all the point cloud output
+            scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
+
+        pcd_save:
+            pcd_save_en: false
+            interval: -1                 # how many LiDAR frames saved in each pcd file;
+            # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.

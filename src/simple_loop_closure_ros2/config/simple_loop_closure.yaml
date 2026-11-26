@@ -1,0 +1,199 @@
+# 2026-11-13: 默认平地图 profile = "projected 3-DOF 回环 + 距离门限 +
+# 几何质量门控 + IMU 重力软先验(auto: lowstate>livox) + Go2 相对 z"。
+# floor 法向因子默认关（A/B 实测对姿态无额外收益，且放大 xy 形变），
+# z 连续性默认关（与 gravity 互斥）。坡面/未知地形改用
+# simple_loop_closure_cave_proxy.yaml（Go2 z 关、gravity 开、floor 关）。
+# 离线 bag 用 scripts/large/p1_runs/slc_offline_livox.yaml（livox 源）。
+# 实测见 nav_ws/docs/2026-11-09-3dof-go2-corridor-validation.md：
+#   默认（Go2 off）    xy 0.21 m / z std 0.40 m / z end +1.07 m
+#   最佳（Go2 z+att）  xy 0.12 m / z std 0.09 m / z end +0.18 m
+# P0 门控是进图前的候选过滤, 不改变图优化; 走廊回归见
+# nav_ws/docs/2026-11-09-3dof-go2-corridor-validation.md 的 P0 小节。
+simple_loop_closure:
+  ros__parameters:
+    mapped_cloud: true
+    time_stamp_tolerance: 0.05
+    keyframe_dist_th: 0.15
+    keyframe_angular_dist_th: 0.05
+    loop_search_time_diff_th: 30.0
+    loop_search_dist_diff_th: 15.0  # 洞窟窄场景:沿轨迹累计里程 15 m 即可回环(原 30)。时间门限 30 s 独立生效,
+                                    # 所以真正放宽的是"路程"这一维。风险:直洞自相似,ICP 可能沿轴向滑移产生错误边,
+                                    # 改完必须用 bag 验 Loop Detected 日志 + 重访处是否单套墙
+    loop_search_angular_dist_th: 3.1415
+    loop_search_frame_interval: 3
+    search_radius: 10.0             # 洞窟窄,空间回访半径 10 m 足够(原 15)。注意代码把该值平方后给 nanoflann
+                                    # (10 m 语义正确),但同一个平方值也拿去做
+                                    # icp_.setMaxCorrespondenceDistance(search_radius_ * 2.0) = 200 m,
+                                    # 等于不设限 —— 上游遗留的单位混用,见 simple_loop_closure_node.cpp:46/62。
+                                    # 若要真正约束 ICP,需另留未平方的副本单独设 1~2 m
+    target_frame_num: 10
+    target_voxel_leaf_size: 0.15
+    source_voxel_leaf_size: 0.15
+    vis_map_voxel_leaf_size: 0.05 # 与 map_accumulator 的 resolution 必须同步。单帧体素 0.15 × 约 10 个视角叠加
+                              # 后本征间距约 0.15/√10≈0.047,再往下取不到新信息 —— 0.05 是地板不是台阶
+    fitness_score_th: 0.3
+    vis_map_cloud_frame_interval: 0 # 0 = 用全部关键帧拼可视地图;纯可视化节流,不影响 ICP/回环精度
+
+    # 2026-11-04 增量可视化地图缓存:
+    #   旧实现每秒把全部关键帧重新变换、拼接、再对整图做 0.05 m 体素滤波,
+    #   单周期成本 O(全部点云),地图变大后 /aft_pgo_map 从 1 Hz 掉到 0.6 Hz。
+    #   新实现每个关键帧只变换/体素化一次(0.05 m first-write-wins 去重),
+    #   1 Hz 周期只处理新增关键帧;回环时或每 vis_full_rebuild_interval_s
+    #   秒做一次全量重建,以吸收 iSAM2 对旧位姿的微小修正。
+    #   vis_incremental: false 可回退到旧的整图重建行为(用于 A/B)。
+    vis_incremental: true
+    vis_full_rebuild_interval_s: 60.0
+    # 2026-11-12: 线程频率. 1 Hz 对快跑/下游避障太慢: 两次优化之间狗走
+    # ~1 m、~8 个关键帧, 地图最多滞后 1 s. 先 5 Hz A/B; CPU 不够再降 2.
+    # loop_rate_hz 控制回环搜索 + iSAM2; vis_rate_hz 控制 /aft_pgo_map
+    # 和 /vis_pose_graph. 两者分开, 因为地图序列化比图更新贵得多.
+    loop_rate_hz: 5.0
+    vis_rate_hz: 2.0
+
+    # 2026-11-07 位姿图噪声 (方差, 不是标准差):
+    #   旧值: 里程计 1e-6 (标准差 1 mm) + 回环 = ICP fitness (0.01 量级).
+    #   回环比里程计弱 4~6 个数量级, 图几乎被里程计链钉死 —— 实测长走廊里
+    #   PGO 输出与原始 LIO 的 z 曲线几乎重合, 回环没能修正高度漂移。
+    #   新值: 里程计按每关键帧 ~1 cm / ~0.6° 建模 (1e-4), 回环方差取 fitness
+    #   (PCL 的均方距离, 单位 m^2) 并设 1e-4 下限 (标准差 1 cm)。这样回环
+    #   与累计里程计不确定度同量级, 能真正把纵向/高度误差拉回来;
+    #   误匹配仍由 Cauchy 鲁棒核 + fitness_score_th 抑制。
+    odom_trans_var: 1.0e-4
+    odom_rot_var: 1.0e-4
+    # 2026-11-13: 世界 z 连续性软因子 (m^2), 每个里程计边一条.
+    # 把每步世界 Δz 拉回 LIO 观测, 保证无可靠 z 观测时后端不把 z 改坏.
+    # 与 enable_go2_attitude / enable_go2_z 互斥（同开会冲突, 见 Parameters.md）;
+    # 代码在姿态先验开启时自动跳过并 WARN.
+    # 默认 YAML 用姿态先验稳定平地 z, 所以这里关. 坡面/未知地形用 cave-proxy
+    # (姿态关) 的 1e-3 = sigma 3.2 cm.
+    odom_z_diff_var: 0.0
+    loop_var_scale: 1.0
+    loop_var_min: 1.0e-4
+
+    # 2026-11-07 回环边质量控制。三个开关默认全部等于"旧行为",
+    # 因为 corridor bag 上实测(只跑上游 A, 同一段数据, 见
+    # go2-nav2-terrain-pointlio/scripts/large/runs/loopdiag*):
+    #
+    #   配置                  PGO z std  末帧 z   末帧 xy   地图 z05
+    #   原始 LIO(参照)          0.31     -0.01    0.22      --
+    #   基线(本文件默认)        0.48     +0.37    0.16     -0.48
+    #   仅开一致性门限          0.60     -1.42    0.41     -1.65
+    #   仅收紧 ICP              0.55     +0.35    0.14     -0.43
+    #   两项都开                0.53     -1.02    0.47     -1.46
+    #   各向异性(放松 z/姿态)   0.57     +0.74    2.45     -0.44
+    #
+    # 结论(2026-11-07, 历史记录): 三项改动都不如当时的基线。回环在这条
+    # 走廊里对 z 是负收益, 但对平面是正收益。
+    # 2026-11-09 更新: 默认已改为 3-DOF (loop_constrain_* = false) +
+    # 距离比例门限; 上面这张表是旧配置的 A/B 记录, 不要再据此理解当前默认。
+    #
+    # icp_max_corr_dist: ICP 对应点最大距离(米)。200 = 旧行为(原代码把
+    #   search_radius 平方后又 x2, 是个单位混用的 bug, 但实测有效: 收到
+    #   1.5 m 时初值偏几米的长基线回环收敛不到正确对齐, 末帧 xy 变差)。
+    icp_max_corr_dist: 200.0
+    # loop_max_trans_delta: 回环边与里程计预测的平移差**下限**(米)。
+    #   2026-11-09 实测：1e6（关闭）时，自相似走廊里 7-10 m 的 false loop
+    #   把 PGO xy 闭合误差推到 2.1 m；启用下面的距离比例门限后降到
+    #   0.13-0.19 m。0.5 单独使用会拒掉 59/95 条长基线真回环，所以要
+    #   和 ratio 一起用。
+    loop_max_trans_delta: 0.3
+    # 距离比例门限：gate = max(loop_max_trans_delta, ratio * 两关键帧间
+    # 路径长度)。0 = 关闭（只用固定门限）。走廊取 0.10：15 m 路径的
+    # false loop 门限 1.5 m（实测 7-10 m 被拒），100 m 真回环门限 10 m。
+    loop_max_trans_delta_ratio: 0.10
+
+    # 2026-11-11 P0: 进图前的几何质量门控 (场景无关, 不拟合具体场地).
+    #   顺序: fitness -> overlap -> yaw -> 候选 Δz -> 平移一致性 -> 去重.
+    # overlap_min: ICP 后源点云落在目标子图 overlap_dist 内的比例下限.
+    #   真实回访同视角重叠高; 自相似墙面滑移往往只有一小段对上.
+    # loop_max_yaw_delta: ICP yaw 相对里程计预测的最大修正 (rad).
+    #   比较的是"修正量", 不是两帧朝向, 所以不同接近方向也能通过.
+    # loop_max_candidate_dz: 候选关键帧高度差上限 (米). 挡住跨层回环;
+    #   同层/坡面真实回访不受影响. 优先用 Go2 z, 否则用优化后的 LIO z.
+    # loop_dedup_window: 同一 target 在这么多查询关键帧内只保留第一条边.
+    overlap_min: 0.30
+    overlap_dist: 0.20
+    loop_max_yaw_delta: 0.52
+    loop_max_candidate_dz: 1.0
+    loop_dedup_window: 20
+
+    # 2026-11-09: 回环只约束 x/y/yaw。z 与 roll/pitch 由里程计链和
+    # （可选）Go2 软因子决定。走廊实测：6-DOF 回环把 z std 从
+    # 原始 LIO 的 0.311 拉到 0.383、末帧从 -0.017 拉到 +0.626。
+    # 需要回到旧行为时两项都设 true。
+    loop_constrain_z: false
+    loop_constrain_attitude: false
+    # 被放开 DOF 的方差。1e4 = std 100 m / 100 rad，相对里程计 (1e-4)
+    # 弱 8 个数量级，等价于不约束；不要用 0.25 这类“半放松”值。
+    # GTSAM Pose3 切空间顺序是 [Rx,Ry,Rz,Tx,Ty,Tz]，旋转在前。
+    loop_var_free: 1.0e4
+
+    # 2026-11-12 P1: 回环因子模式。
+    # projected_3dof: 真 3-DOF（world xy + yaw），z/roll/pitch 不进入因子，
+    #   坡面上 yaw/姿态修正不会耦合进世界 z。
+    # diagonal: P0 行为（BetweenFactor + 放开 z/roll/pitch 方差），精确回退。
+    # 模式与 loop_constrain_* 冲突时启动 WARN 并回退 diagonal。
+    loop_factor_mode: projected_3dof
+
+    # 2026-11-09: Go2 相对 z 软因子（相邻关键帧的 Δz）。
+    # /utlidar/robot_pose.z 的原点任意，所以只用差值，offset 自动抵消。
+    # 2026-11-13: 默认 YAML 面向平地走廊，改为开启。快走走廊实测：
+    # 关闭时回环会把 z 抬到 +1.7~+2.0 m（两种回环模式都一样）；开启后
+    # z std 0.16、末值 +0.54。坡面/台阶必须用 cave-proxy（此项关闭）。
+    enable_go2_z: true
+    go2_pose_topic: "/utlidar/robot_pose"
+    go2_pose_timeout: 0.30
+    # 1 cm。2026-11-09 修正 z 因子 Jacobian 后 1 cm 稳定
+    # (z std 0.094 / xy 0.116)；修正前 1 cm 崩 xy 是 Jacobian 错误导致的假象。
+    go2_z_var: 1.0e-4
+    # Cauchy scale (whitened residual units). 1.0 down-weighted the several-cm
+    # residual a fast gait accumulates between 1 Hz updates; 5.0 keeps normal
+    # inliers active while still bounding Go2 SLAM resets/dropouts.
+    go2_z_robust_scale: 5.0
+
+    # 2026-11-13 P2: IMU 重力软先验取代 Go2 姿态先验.
+    # 三个源都归约成"机体系比力方向"的 roll/pitch 约束, yaw/平移自由.
+    # 源默认 auto: 真机优先 lowstate(轴正交最好), bag 无 lowstate 时自动
+    # 落到 livox; 也可显式 lowstate/livox/utlidar 固定一个源.
+    # 与 enable_go2_attitude 互斥: 前者开启时后者被 useGo2Attitude 跳过.
+    enable_gravity_prior: true
+    # 重力源选择: lowstate(机身 IMU) | livox(L2 激光 IMU, = Point-LIO 前端
+    # 的同一颗 IMU, 但后端只把它当绝对姿态锚, 不是重复使用位姿) |
+    # utlidar(同一 L2, 经 calibrate_imu 15.1° 变换+取反) |
+    # auto(默认: 优先 lowstate, 当前关键帧窗口内没有 lowstate 样本时自动
+    # 用 livox —— 真机走 lowstate, bag 回放自动落到 livox).
+    # 切换方式: 改这一行即可; auto 固定订阅 /lf/lowstate + /livox/imu.
+    gravity_source: auto
+    # gravity_topic 留空 = 按 source 选 /lf/lowstate | /utlidar/imu | /livox/imu
+    gravity_topic: ""
+    gravity_var_deg: 3.0
+    gravity_robust_scale: 3.0   # Cauchy, whitened residual units
+    gravity_timeout: 0.30
+    # 0.30 s 滑窗: 单帧 accel 在步态下 pitch std 8.3 deg, 平均后 2.9 deg
+    gravity_lowpass_s: 0.30
+    # 动态门控: 窗口平均比力模长偏离滑动 EMA 超过该比例则跳过该帧
+    # (台阶/跳跃; 现有场地触发率 ~0.15%, 0 = 关闭)
+    gravity_norm_tol: 0.20
+    # Go2 基座 -> LIO 机体(z up, x forward)的常量安装角, "roll,pitch,yaw" 度.
+    # 留空 = 单位阵; 用站立 bag 标定后填入.
+    gravity_extrinsic_rpy: ""
+    gravity_roll_offset: 0.0
+    gravity_pitch_offset: 0.0
+    # 仅 A/B 实验: 允许重力先验与世界 z 连续性同开.
+    allow_gravity_z_diff_coexist: false
+
+    # 2026-11-13 P2: 地面法向连续性 (相对 roll/pitch 约束), 默认关.
+    # A/B 实测: 相对约束抓不住门后的单调姿态漂移 (方差比里程计弱 12 倍),
+    # 慢走走廊 541 条边对 pgo_pitch_err 无影响, 反而把 PGO-LIO 的 xy
+    # 形变从 3.7 m 放大到 6.2 m.  保留为可选: 适合无 IMU / IMU 失效,
+    # 或只需要跨无效段连接、不需要绝对姿态锚的场景.
+    enable_floor_normal_factor: false
+    floor_normal_var_deg: 2.0
+    floor_normal_max_step_deg: 10.0
+    floor_normal_max_gap_keyframes: 50
+
+    # 2026-11-09: Go2 roll/pitch 软先验 (旧路径, 默认关闭).
+    # 2026-11-13 P2 起被 enable_gravity_prior 取代: 同一个重力竖直约束,
+    # 但 lowstate/utlidar/livox 的源比 2.5D robot_pose 更干净.
+    enable_go2_attitude: false
+    go2_attitude_var_deg: 3.0   # 1 sigma，步态振动下 2-5 deg 都合理

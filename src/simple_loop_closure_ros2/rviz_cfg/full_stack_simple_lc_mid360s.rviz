@@ -1,0 +1,208 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+      Splitter Ratio: 0.5
+    Tree Height: 600
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Expanded:
+      - /2D Pose Estimate1
+      - /2D Nav Goal1
+    Name: Tool Properties
+    Splitter Ratio: 0.588679016828537
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.3
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: 10
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 170; 170; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enable Transforms: false
+      Enabled: true
+      Filter Size: 10
+      Max: 30
+      Min: 0.1
+      Name: /Laser_map (Point-LIO)
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 1.5
+      Size (m): 0.05
+      Style: Flat Squares
+      Topic: /Laser_map
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value transformer: intensity
+    - Alpha: 0.6
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: 10
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 85; 85
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enable Transforms: false
+      Enabled: true
+      Filter Size: 10
+      Max: 30
+      Min: 0.1
+      Name: /aft_pgo_map (PGO corrected)
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 1.5
+      Size (m): 0.05
+      Style: Flat Squares
+      Topic: /aft_pgo_map
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value transformer: intensity
+    - Alpha: 0.8
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: 10
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 85; 255; 85
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enable Transforms: false
+      Enabled: true
+      Filter Size: 10
+      Max: 30
+      Min: 0.1
+      Name: /global_pgo_map (accumulator)
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 1.5
+      Size (m): 0.05
+      Style: Flat Squares
+      Topic: /global_pgo_map
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value transformer: intensity
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 255; 255; 255
+      Head Diameter: 0.150
+      Head Length: 0.100
+      Length: 0.200
+      Line Style: Lines
+      Line Width: 0.020
+      Name: /path (Point-LIO raw)
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Pose Color: 255; 255; 255
+      Pose Style: None
+      Queue Size: 10
+      Radius: 0.050
+      Shaft Diameter: 0.100
+      Shaft Length: 0.100
+      Topic: /path
+      Unreliable: false
+      Value: /aft_pgo_odom
+    - Alpha: 1
+      Angle Tolerance: 0.10
+      Class: rviz_default_plugins/Odometry
+      Color: 85; 255; 85
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 0
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.5
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: false
+      Enabled: true
+      Head Length: 0.10
+      Head Radius: 0.05
+      Keep: 200
+      Length: 0.20
+      Name: /aft_pgo_odom (PGO)
+      Position Tolerance: 0.10
+      Queue Size: 10
+      Shaft Length: 0.10
+      Shaft Radius: 0.03
+      Topic: /aft_pgo_odom
+      Unreliable: false
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: /vis_pose_graph
+      Topic: /vis_pose_graph
+      Unreliable: false
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Default Light: true
+    Fixed Frame: camera_init
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 8
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.060
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.050
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.010
+      Pitch: 0.785
+      Target Frame: camera_init
+      Yaw: 0.785
+Window Geometry:
+  Height: 800
+  Width: 1200
+
+
+
