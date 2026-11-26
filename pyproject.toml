@@ -1,0 +1,17 @@
+# ruff 配置（CI 与本地共用）
+#
+# 只查"真的会炸"的问题：语法错误 + 未定义名 + 无效比较。
+# 不做格式检查 —— 仓库尚无统一格式化基线，格式检查只会制造噪声。
+
+[tool.ruff]
+# 用 extend-exclude 而不是 exclude —— 后者会**替换** ruff 的内置排除列表
+# （.git、node_modules 等），导致 ruff 去扫 .git 目录。
+# 追加排除：
+#   thirdparty  —— vendor 的第三方源码（nanoflann 等）
+#   Log         —— point_lio 上游自带的 IMU 调试绘图脚本，依赖同目录 plot.py
+#                  的全局变量，单独静态分析必然报 F821；不参与构建
+#   build/install/log —— colcon 产物
+extend-exclude = ["thirdparty", "Log", "build", "install", "log"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

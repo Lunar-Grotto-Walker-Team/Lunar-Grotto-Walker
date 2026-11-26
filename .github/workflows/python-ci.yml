@@ -7,8 +7,8 @@ on:
     branches: [main, develop]
 
 # 只查"真的会炸"的问题：语法错误 + 未定义名 + 无效比较。
-# 不做格式检查（black/ruff format）—— 本仓库的 launch 文件与工具脚本没有统一
-# 格式化基线，格式检查只会制造噪声；等团队定下格式化规范后再单独加一个 job。
+# 规则与排除项统一写在根目录 pyproject.toml 的 [tool.ruff] 里，
+# 保证本地 `ruff check .` 与 CI 行为一致。
 #
 # pytest 目前没有可收集的 Python 测试（测试都在 C++ gtest 里），
 # 等出现 Python 测试时取消最后一段注释。
@@ -33,12 +33,8 @@ jobs:
       - name: Compile check
         run: python -m compileall -q src tools
 
-      - name: Ruff (errors only)
-        run: |
-          ruff check \
-            --select E9,F63,F7,F82 \
-            --exclude thirdparty,build,install,log \
-            .
+      - name: Ruff
+        run: ruff check .
 
       # - name: Unit tests
       #   run: pip install pytest && pytest -q
