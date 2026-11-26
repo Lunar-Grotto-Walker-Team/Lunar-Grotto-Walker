@@ -1,0 +1,35 @@
+# BAND-WIDE (legacy, explicit override only -- 2026-11-14)
+#
+# The old global height gate: one z band anchored on the robot's CURRENT
+# height, applied to every point of the map. It is the cheapest mode, but it
+# is only correct on flat ground with a well-constrained z -- any slope, and
+# any PGO z drift, pushes already-mapped ground out of the band (climbing cuts
+# the terrain behind, descending cuts it ahead).
+#
+# Since 2026-11-14 the default projector yaml is ground_mode=reference, which
+# anchors the gate on each cell's OWN ground. This file is NOT loaded by
+# default; pass it explicitly when you want the flat-corridor baseline or an
+# A/B against the 2026-11-07 numbers:
+#
+#   ros2 launch pgo_gridmap_projector go2_pointlio_projected.launch.py \
+#     projector_params_file:=<install>/pgo_gridmap_projector/share/\
+# pgo_gridmap_projector/config/projector_params_band.yaml
+#
+# ROS fills every key that is not listed here from the node's declared
+# defaults, so this file only carries what differs from -- or is required to
+# reproduce -- the band-wide behaviour.
+pgo_gridmap_projector:
+  ros__parameters:
+    ground_mode: "band"
+    # Relative to the pose these edges are ground -0.81 m .. +0.89 m: the
+    # floor sits 0.392 m below the pose.  -0.5 used to leave only 0.108 m of
+    # margin under the floor, and a late loop closure dropped the floor out
+    # of the band; -1.2 keeps it while the upper edge stays where it was.
+    ignore_points_above: 0.5
+    ignore_points_below: -1.2
+    # The robot-centred fixed window applies to both modes; the node's
+    # declared default is off, so a band run that wants the 70 m window (the
+    # 2 Hz configuration) must ask for it here.
+    window_centered_on_pose: true
+    window_length: 70.0
+    window_quantum: 1.0

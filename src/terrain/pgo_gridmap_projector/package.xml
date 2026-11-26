@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>pgo_gridmap_projector</name>
+  <version>0.1.0</version>
+  <description>Projects the PGO-corrected full map (/aft_pgo_map) into a grid_map_msgs/GridMap elevation layer.</description>
+  <maintainer email="claude@anthropic.com">Claude</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>grid_map_msgs</depend>
+  <depend>python3-numpy</depend>
+  <!-- Optional native median kernel; the node falls back to numpy if it is
+       not built. -->
+  <exec_depend>pgo_raster_cpp</exec_depend>
+  <!-- launch 会起 utlidar_terrain_fill 并读它的 share 目录 -->
+  <exec_depend>utlidar_terrain_fill</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

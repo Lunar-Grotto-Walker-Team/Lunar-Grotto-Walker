@@ -1,0 +1,7 @@
+n_rows 500
+n_cols 500
+row 246
+col 373
+flat 186746
+is_row_major 0
+start_index 0 0
