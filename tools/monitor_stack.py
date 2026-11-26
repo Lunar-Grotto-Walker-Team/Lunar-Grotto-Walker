@@ -24,9 +24,10 @@ what it measures:
 Usage:
 
     # in a separate terminal, while the stack is running
+    # (<repo> = 本仓库在容器内的路径, 例如 /my_ws/l4t/Lunar-Grotto-Walker)
     docker exec -it self_l4t bash -c \
       "source /my_ws/l4t/l4t_setup.sh && \
-       python3 /my_ws/l4t/nav_ws/pointlio_ws/scripts/monitor_stack.py --duration 1500"
+       python3 <repo>/tools/monitor_stack.py --duration 1500"
 
     # quieter, CSV only
     ... --duration 1500 --print-every 0 --csv /tmp/stack.csv
