@@ -96,3 +96,39 @@ def test_same_world_point_keeps_its_cell_across_growth():
     lo2, hi2 = cell_bounds(grown, 0.37)
     assert abs(lo1 - lo2) < 1e-6
     assert abs(hi1 - hi2) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# window_spec: fixed robot-centred window
+# ---------------------------------------------------------------------------
+
+def test_window_spec_centres_on_pose_and_keeps_the_length():
+    from pgo_gridmap_projector.extent import window_spec
+    spec = window_spec((3.4, -2.6), 70.0, 0.10)
+    assert spec.length_x == spec.length_y == 70.0
+    assert spec.n_rows == spec.n_cols == 700
+    # quantum defaults to 1 m, so the centre snaps to whole metres
+    assert spec.origin_x == 3.0
+    assert spec.origin_y == -3.0
+
+
+def test_window_spec_quantum_zero_keeps_the_exact_pose():
+    from pgo_gridmap_projector.extent import window_spec
+    spec = window_spec((3.4, -2.6), 70.0, 0.10, quantum=0.0)
+    assert spec.origin_x == 3.4
+    assert spec.origin_y == -2.6
+
+
+def test_window_spec_needs_a_pose():
+    from pgo_gridmap_projector.extent import window_spec
+    assert window_spec(None, 70.0, 0.10) is None
+
+
+def test_window_spec_is_independent_of_the_map_bbox():
+    # Two poses 50 m apart must give the same size, different origin: that is
+    # the whole point of replacing the bbox-driven extent.
+    from pgo_gridmap_projector.extent import window_spec
+    a = window_spec((0.0, 0.0), 70.0, 0.10)
+    b = window_spec((50.0, 0.0), 70.0, 0.10)
+    assert (a.n_rows, a.n_cols) == (b.n_rows, b.n_cols) == (700, 700)
+    assert (a.origin_x, b.origin_x) == (0.0, 50.0)

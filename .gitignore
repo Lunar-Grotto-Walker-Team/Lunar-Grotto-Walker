@@ -18,3 +18,8 @@ Thumbs.db
 install/
 log/
 build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
