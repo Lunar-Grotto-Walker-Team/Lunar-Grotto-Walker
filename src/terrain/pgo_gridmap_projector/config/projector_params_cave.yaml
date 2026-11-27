@@ -98,8 +98,16 @@ pgo_gridmap_projector:
     # 2026-11-27: 该块在 11-20 工作区事故恢复时丢失，cave profile 退回 11-04
     # 的自适应 30 m（cap 120 m）。同目录 projector_params.yaml 与
     # projector_params_band.yaml 一直保留着 window 70，只有 cave 丢了。
+    #
+    # 2026-11-27 实测（cave_20261120_092710，100 s，308 关键帧）：window 70
+    # 时栅格 700x700=49 万格，projector 单帧 1.6 s，端到端
+    # /elevation_map_raw_post 只有 0.21-0.26 Hz；同 bag 在自适应 ~30 m
+    # （9 万格）下是 0.87 Hz。瓶颈是 O(格数) 的栅格化，与点数无关
+    # （33 万点 1.6 s，而 11-20 的 160 万点只要 1.1 s）。
+    # 洞穴单程在 30 m 量级，70 m 窗口纯属浪费，故 cave profile 单独取 30 m；
+    # 长走廊/带状场景（projector_params.yaml、_band.yaml）仍需 70 m。
     window_centered_on_pose: true
-    window_length: 70.0
+    window_length: 30.0
     window_quantum: 1.0
     extent_shrink: false
     # 取 bbox 前每轴丢弃的极端样本数: 一个配准离群点就足以把网格拖到
