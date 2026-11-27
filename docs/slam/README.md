@@ -5,7 +5,7 @@
 | [pointlio-user-log.md](pointlio-user-log.md) | Point-LIO + simple_loop_closure 全栈运行手册：启动命令、参数表、点云密度链、离线 bag 回放、smoke test | **最后更新 2026-10-22**，见下方过时说明 |
 | [warmup-start-verification.md](warmup-start-verification.md) | 暖机启动门控（`wait_for_start` / `/start_mapping`）的验证协议与实测结果 | 2026-11-26 实测 |
 | [../../src/simple_loop_closure_ros2/Parameters.md](../../src/simple_loop_closure_ros2/Parameters.md) | 后端参数总表、先验地图、建图门控 | 与代码同步 |
-| [../../src/point_lio_ros2/UPSTREAM.md](../../src/point_lio_ros2/UPSTREAM.md) | Point-LIO 上游来源与本地改动清单 | 与代码同步 |
+| [Lunar-Grotto-Walker-PointLIO/UPSTREAM.md](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO/blob/main/UPSTREAM.md) | Point-LIO 上游来源与本地改动清单（GPL-2.0，独立仓库，`deps.repos` 拉取到 `src/point_lio_ros2`） | 与代码同步 |
 | [../../src/simple_loop_closure_ros2/UPSTREAM.md](../../src/simple_loop_closure_ros2/UPSTREAM.md) | simple_loop_closure 上游来源与本地改动清单 | 与代码同步 |
 
 ## ⚠️ pointlio-user-log.md 的过时章节

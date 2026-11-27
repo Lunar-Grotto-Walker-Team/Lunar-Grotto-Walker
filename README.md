@@ -15,8 +15,11 @@
 ## 依赖与构建
 
 第三方驱动与基础库统一收编在
-[Lunar-Grotto-Walker-Vendor](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor)，
-版本由根目录 [`deps.repos`](deps.repos) 固定。
+[Lunar-Grotto-Walker-Vendor](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor)；
+GPL-2.0 的 Point-LIO 前端单独放在
+[Lunar-Grotto-Walker-PointLIO](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO)，
+以避免与仓库内的 BSD-3 代码混在一起。两者的版本都由根目录
+[`deps.repos`](deps.repos) 固定。
 
 ```bash
 vcs import src < deps.repos     # 拉取第三方包

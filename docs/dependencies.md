@@ -12,15 +12,28 @@
 
 ---
 
-## 1. 本仓库内的包（源自上游，已修改）
+## 1. 上游包（已修改）
+
+### 1.1 在本仓库内（BSD-3-Clause）
 
 | 包 | 上游 | License | 改动说明 |
 |---|---|---|---|
-| `src/point_lio_ros2`（包名 `point_lio`） | [dfloreaa/Point-LIO-ROS2](https://github.com/dfloreaa/Point-LIO-ROS2) → [hku-mars/Point-LIO](https://github.com/hku-mars/Point-LIO) | **GPL-2.0** | [UPSTREAM.md](../src/point_lio_ros2/UPSTREAM.md) |
 | `src/simple_loop_closure_ros2`（包名 `simple_loop_closure`） | [ashBabu/simple_loop_closure](https://github.com/ashBabu/simple_loop_closure) → [vectr-ucla/SimpleLoopClosure](https://github.com/vectr-ucla/SimpleLoopClosure) | BSD-3-Clause | [UPSTREAM.md](../src/simple_loop_closure_ros2/UPSTREAM.md) |
 
-> ⚠️ `point_lio` 是 **GPL-2.0**。公开分发无碍（保留 LICENSE 即可），但项目若需闭源或
-> 商业化，这部分会受限，请提前评估。
+### 1.2 在独立仓库（GPL-2.0）
+
+| 包 | 仓库 | 上游 | License |
+|---|---|---|---|
+| `src/point_lio_ros2`（包名 `point_lio`） | [Lunar-Grotto-Walker-PointLIO](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO) | [dfloreaa/point_lio_ros2](https://github.com/dfloreaa/point_lio_ros2) → [hku-mars/Point-LIO](https://github.com/hku-mars/Point-LIO) | **GPL-2.0** |
+
+> **为什么单独一个仓库**：`point_lio` 是 GPL-2.0，本仓库其余代码是 BSD-3-Clause 与
+> 团队自写代码。同一仓库分发 GPL 与宽松许可代码，容易在法律上被当成一个整体作品，
+> 从而让 BSD-3 部分被 GPL 覆盖（《第三方仓库修改与入库通用指南》§6/§10）。
+> 拆开后 GPL 义务只由那个仓库承担；将来若需闭源交付，只需替换这一个依赖。
+>
+> 本仓库不复制它的代码，只通过 `deps.repos` 钉一个 commit 拉取，
+> 落地路径仍是 `src/point_lio_ros2`，各 launch 里的包名 `point_lio` 不变。
+> 改动清单见该仓库的 `UPSTREAM.md`。
 
 ## 2. 第三方包（来自 vendor 仓库）
 
