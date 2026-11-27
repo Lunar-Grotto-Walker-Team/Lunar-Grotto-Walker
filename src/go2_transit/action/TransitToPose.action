@@ -1,0 +1,19 @@
+# 目标位姿：只取 position；frame_id 可为 odom 或 map（空 = planning_frame）
+geometry_msgs/PoseStamped target
+# 0 = 用节点参数 default_xy_tolerance
+float32 xy_tolerance
+# true 时到点后再转到 target 的朝向
+bool align_yaw
+# align_yaw=true 时生效；0 = 用 default_yaw_tolerance
+float32 yaw_tolerance
+---
+bool success
+# ok|timeout|unreachable|nav2_unavailable|tf_unavailable|invalid_goal|canceled
+string reason
+float32 final_xy_error
+float32 final_yaw_error
+---
+# pre_align|traverse|final_align|verify
+string phase
+float32 distance_remaining
+float32 heading_error
