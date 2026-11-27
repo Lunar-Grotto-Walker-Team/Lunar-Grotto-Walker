@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  transit_patrol.xml — 从洞口沿 +X 前进 3 m, 再回到洞口(2026-11-20)。
+
+  ══ 结构 ══════════════════════════════════════════════════════
+    Sequence(patrol_once)
+      ReactiveFallback(out_leg_or_collect)
+          ├─ ForceFailure( Sequence( IsTargetWithin(0.55 m), CollectOne ) )
+          └─ Sequence( SetPoseStamped(local;3,0), TransitToLocalPoint(keep_origin) )
+      ReactiveFallback(back_leg_or_collect)
+          ├─ ForceFailure( Sequence( IsTargetWithin(0.55 m), CollectOne ) )
+          └─ Sequence( SetPoseStamped(local;-3,0), TransitToLocalPoint(keep_origin) )
+
+  ══ 为什么这么搭 ══════════════════════════════════════════════
+  * BT.CPP 4.9 的 ReactiveFallback: 某个子节点 RUNNING 时会 halt 其它所有
+    子节点, 并立刻返回 RUNNING。所以"采集"支一旦开始执行(IsTargetWithin
+    SUCCESS -> CollectOne RUNNING), 驱动支就被 halt —— TransitToLocalPoint
+    的 onHalted() 会 async_cancel_all_goals(), 狗停在原地。
+  * IsTargetWithin 是**即时条件**(永不 RUNNING), 否则它自己的 RUNNING 会把
+    驱动支 halt 掉, 巡逻永远走不动。这是它和 WaitUntilTargetNear 的区别。
+  * ForceFailure: 采集完返回 SUCCESS 会把整个 ReactiveFallback 判成功、
+    直接跳到回程 —— 那不是要的行为。用 ForceFailure 把"采集已完成"改写成
+    FAILURE, ReactiveFallback 于是继续 tick 驱动支, 在**同一 tick** 内接着
+    走。这是 BT 里"做完一件事后继续 Selector"的标准写法。
+  * keep_origin="true": 打断后重新进入驱动支时, 局部原点仍是最初那个,
+    目标仍是同一个绝对点 —— Nav2 从当前位置直接开到终点, 也就是"把这一腿
+    剩下的路程走完"。默认 false 的语义是每次重新定位(适合一次性摆渡)。
+
+  ══ 坐标系 ══════════════════════════════════════════════════
+  "local" 原点 = 这条腿启动那一刻狗的位置, x 轴 = 那一刻的机头朝向;
+  到点后 TransitToPose 会 align_yaw 回该朝向, 所以去程与回程互逆向。
+  改 3.0 这个数时, 两处要一起改(去程 +3.0, 回程 -3.0)。
+
+  ══ 前置 ══════════════════════════════════════════════════════
+  * Nav2(C) + point_lio(A) 在跑(由 track_collect_reactive_v2 的 ① 起);
+  * tracker 在出 /perception/tracks/unified;
+  * 采集链路(伺服 + MoveIt + 臂相机)可用 —— 中断时会调 collect_one.xml。
+-->
+<root BTCPP_format="4" main_tree_to_execute="TransitPatrol">
+  <BehaviorTree ID="TransitPatrol">
+    <Sequence name="patrol_once">
+
+      <!-- ════════ 去程: 前进 3 m, 途中可被采集打断 ════════ -->
+      <ReactiveFallback name="out_leg_or_collect">
+        <!-- 采集支: 只做"要不要停"的判断 + 执行。ForceFailure 见文件头。
+             IsTargetWithin 的方位判据默认关闭(max_azimuth_rad=0, 与 v2 的
+             接近门控一致); 想只在机头正前方 ±15° 内才停, 把
+             max_azimuth_rad 设为 0.2618、sector_center_rad 保持 0 即可。 -->
+        <ForceFailure>
+          <Sequence name="collect_now_out">
+            <IsTargetWithin min_xy_m="0.0" max_xy_m="0.55"
+                            max_age_ms="1000"
+                            max_azimuth_rad="0.0"
+                            sector_center_rad="0.0"
+                            track_id="{track_id}"/>
+            <!-- _autoremap: 子树黑板默认不向父黑板查找, 而 CollectOne 要读
+                 {track_id} / samples / {pre_grasp_pose} 这些父黑板条目。 -->
+            <SubTree ID="CollectOne" _autoremap="true"/>
+          </Sequence>
+        </ForceFailure>
+
+        <!-- 驱动支: 同一条腿被打断后重新进入时, 靠 keep_origin 续上剩余路程。 -->
+        <Sequence name="drive_out">
+          <SetPoseStamped output_key="patrol_out_goal"
+                          value="local;3.0;0.0;0.0;0;0;0;1"/>
+          <TransitToLocalPoint name="go_out"
+                               goal="{patrol_out_goal}"
+                               keep_origin="true"
+                               result_reason="{patrol_out_reason}"/>
+        </Sequence>
+      </ReactiveFallback>
+
+      <!-- ════════ 回程: 从终点回到洞口 ════════ -->
+      <ReactiveFallback name="back_leg_or_collect">
+        <ForceFailure>
+          <Sequence name="collect_now_back">
+            <IsTargetWithin min_xy_m="0.0" max_xy_m="0.55"
+                            max_age_ms="1000"
+                            max_azimuth_rad="0.0"
+                            sector_center_rad="0.0"
+                            track_id="{track_id}"/>
+            <!-- _autoremap: 子树黑板默认不向父黑板查找, 而 CollectOne 要读
+                 {track_id} / samples / {pre_grasp_pose} 这些父黑板条目。 -->
+            <SubTree ID="CollectOne" _autoremap="true"/>
+          </Sequence>
+        </ForceFailure>
+
+        <Sequence name="drive_back">
+          <SetPoseStamped output_key="patrol_back_goal"
+                          value="local;-3.0;0.0;0.0;0;0;0;1"/>
+          <TransitToLocalPoint name="go_back"
+                               goal="{patrol_back_goal}"
+                               keep_origin="true"
+                               result_reason="{patrol_back_reason}"/>
+        </Sequence>
+      </ReactiveFallback>
+
+    </Sequence>
+  </BehaviorTree>
+</root>

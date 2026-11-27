@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  warmup_start_mapping.xml — 暖机后"开始建图"触发器的演示/拼接用例。
+
+  背景：point_lio 以 wait_for_start:=true 启动时，会照常把驱动、DDS、
+  滤波器和地图全部拉起来，但**丢弃所有 lidar/IMU**，直到收到一次
+  /start_mapping（std_srvs/Empty）。这样地图原点落在操作员实际摆放
+  机器狗的位置（基地原点），而不是暖机时它恰好停着的地方。
+
+  StartMapping 就是那个服务调用的 BT 薄壳：
+    - 服务是一次性锁存 + 幂等，成功一次后重复调用无害；
+    - 失败（服务未出现 / 超时）→ BT FAILURE，**不要**用 ForceSuccess
+      吞掉：狗以为在建图、而 LIO 还在丢数据，正是这个节点要防的事故。
+
+  调用前置条件（树没写、由操作员保证）：
+    1. 狗已被摆到基地原点，朝向基地 x 正方向；
+    2. A 端（point_lio + SLC）已起并处于 waiting 状态。
+
+  真实树里的位置：整段探索子树（NavigateToPose / frontier）之前，
+  且只在"这一趟第一次进洞"时执行一次。
+
+  典型拼接方式（不是可执行节点，仅示意；XML 注释里不能写标签，
+  下面用缩进文本表达）：
+
+    Sequence
+      StartMapping
+      RetryUntilSuccessful(num_attempts=10)
+        WaitForPgoOdom          (若有这类叶子；没有就换成等 /aft_pgo_odom)
+      NavigateToPose
+
+  注意：本文件的大注释块里不要再出现 XML 标签或嵌套注释 ——
+  注释在第一个 "->" 处就会提前结束，导致整棵树解析失败
+  (2026-11-27 实测 WarmupStartMapping 一直加载不出来就是这个原因)。
+-->
+<root BTCPP_format="4" main_tree_to_execute="WarmupStartMapping">
+  <BehaviorTree ID="WarmupStartMapping">
+    <!-- 单步演示：触发后立即 SUCCESS。实测用法见文件头注释。 -->
+    <StartMapping/>
+  </BehaviorTree>
+</root>

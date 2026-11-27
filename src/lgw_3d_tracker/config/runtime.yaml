@@ -1,0 +1,104 @@
+unified_track:
+  enabled: true
+
+  # 输入订阅
+  head_detections_topic: /perception/two_stage/camera_head/result
+  arm_detections_topic:  /perception/two_stage/camera_arm/result
+  sport_pose_topic: /utlidar/robot_pose
+
+  # 输出
+  output_topic: /perception/tracks/unified
+  output_frame_id: odom
+  # 没有新观测时的心跳/投影频率; 有新观测时立即发布.
+  publish_heartbeat_hz: 25.0
+
+  # KF 参数 (3 维 state, 单位 m/tick)
+  process_noise_position: 0.05
+  observation_noise_position: 0.03
+
+  # 任务状态机 (时间单位: wall-clock ms)
+  candidate_min_hits: 3
+  candidate_min_age_ms: 0
+  candidate_ttl_ms: 2000
+  # 2026-11-17: lost 退役。active 距最后一次观测 15 s 后归档(滚动计时);
+  # 真机平台测试后由 40 s 收紧到 15 s, 2026-11-19 再放宽到 20 s(用户决定)。
+  # consumed/ignored 保留 60 s 后归档(抑制与诊断)。
+  active_ttl_ms: 20000
+  consumed_ttl_ms: 60000
+  # 超过这个"未观测时长"就冻结 predict;重新匹配时直接重置 KF。
+  predict_freeze_after_ms: 1000
+
+  # 发布时选源: arm > head > 最后已知
+  observation_max_age_ms: 500
+  source_priority: [arm, head]
+
+  # 关联 / 注册表
+  # 2026-11-17: 单一关联门 0.15(主关联 + candidate 共用)。
+  association_distance_gate_m: 0.15
+  duplicate_track_distance_m: 0.04
+  max_registry_size: 100
+  # 2026-11-18 建轨门限(只丢弃观测, 不删已有轨迹):
+  #   max_track_distance_m   与机械臂基座的三维距离超过该值 -> 不建轨
+  #                          (0 = 不限)。历次: 1.5 m -> 5.0 m -> 2026-11-19
+  #                          改回 2.0 m: 5 m 太远, 真机上狗走开后目标被带到
+  #                          3.2 m 仍算"目标", 树在 WaitUntilTargetNear 里
+  #                          空等到超时; 2 m 内的目标才可能进入采集流程。
+  #   base_exclusion_radius_m  与"基地圆心"的 XoY 距离小于该值 -> 不建轨
+  #                          (屏蔽基地里已采集、堆放的目标, 防重复识别)
+  #                          基地圆心由行为树初始化时通过 MarkTrack action=6
+  #                          钉住(= 那一刻机器人的 odom 位置), 日志会打
+  #                          "base circle pinned at odom x=.. y=.."; 未钉住前
+  #                          屏蔽圈不生效。
+  max_track_distance_m: 2.0
+  base_exclusion_radius_m: 0.4
+  # 2026-11-19: 被选中的轨迹豁免 active_ttl(否则抓取中途 id 滚动, BT 里的
+  # {track_id} 变悬空 -> MarkTrack 被拒)。这个值是豁免上限: 选中后连续
+  # 这么久没有观测就退役, 防止"目标被拿走却永远挂着"。
+  # 配建轨门控 2 m (max_track_distance_m) 一起看: 目标跑出 2 m 后观测被丢,
+  # 位置冻结, 这里就是行为树还要空等多久。60000 -> 15000: 最坏等待从 60 s
+  # 缩到 15 s (WaitUntilTargetNear 本身的超时是 120 s, 不会被它触发)。
+  selected_max_unseen_ms: 15000
+  # arm 命中计数窗口(随消息发布,BT 用 >=3 做核实判据)。
+  arm_window_ms: 3000
+  # ignore 之后压制原地重检,防止 2 s 后又长出新目标。
+  consumed_suppress_enable: true
+  consumed_suppress_radius_m: 0.15
+  consumed_suppress_ttl_ms: 10000
+
+  # 任务目标选择(tracker 单点维护)
+  # 2026-11-17 真机实测:当前 YOLOE 输出 rocka / rockb / wood(不是旧文档的
+  # wood_block / red_block)。prompt 名为 rocka_rockb_wood_*,三类均为采集目标;
+  # 空 = 允许所有 class。若要单类采集,填 rocka / rockb / wood。
+  select_class_filter: ""
+  # XoY 平面距离到 arm1/base_link 原点;0 = 不限上限。
+  select_min_distance_m: 0.20
+  select_max_distance_m: 0.0
+  selection_fresh_ms: 1000
+
+  appearance_class_must_match: true
+  # 两阶段关联:conf >= high 走阶段一(正常匈牙利关联);
+  # [low, high) 走阶段二(只关联阶段一没配上的 track)。
+  # 2026-11-16: 检测端保留 0.30 门槛,low 对齐到 0.30(低于它的观测根本不会到达),
+  # high 从 0.40 提到 0.45 —— 让贴边伪检(实测 conf 0.36~0.39)落进弱关联档,
+  # 而真实木块(0.80~0.92)仍在高置信档。
+  # 2026-11-18: 用户要求 high 提到 0.55(检测端同时提到 0.40),
+  # low 同步提到 0.40 —— 检测端已经丢掉 <0.40 的框, 收不到更低置信的观测,
+  # 写 0.30 只会让配置看起来还有一段参与关联的空区间。
+  # 生效区间: conf>=0.55 走正常匈牙利关联; [0.40, 0.55) 走弱关联。
+  two_stage:
+    enabled: true
+    high_conf_threshold: 0.55
+    low_conf_threshold: 0.40
+
+  # odom 缓存
+  tf_cache_sec: 30.0
+  robot_pose_stale_ms: 500
+
+  # 标定 JSON 路径 (空 = 默认 share/.../head_calibration.json)
+  head_calibration_file: ""
+
+  # 机械臂 TF frame 前缀
+  arm_frame_prefix: "arm1/"
+
+  # 机械臂在 Go2 躯干上的安装偏移 [x, y, z, roll, pitch, yaw]
+  arm_mount_offset: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

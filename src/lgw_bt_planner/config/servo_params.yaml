@@ -1,0 +1,94 @@
+# moveit_servo parameters for the Go2 + agx arm takeover stack.
+#
+# Values: spec 2026-10-26 §6.2 (docs/superpowers/specs/2026-10-26-lgw-servo-takeover-design.md).
+#
+# FILE STRUCTURE (important — do not "simplify" back to the spec snippet):
+#   * The node launched by `moveit_servo/servo_node_main` is named `servo_node`
+#     (servo_node.cpp: `rclcpp::Node("servo_node", options)`), so the rcl YAML
+#     node section must be `servo_node:` — an `moveit_servo:` section would be
+#     silently ignored (no warning, Servo falls back to C++ defaults).
+#   * Servo declares every tunable with the `moveit_servo.` prefix
+#     (ServoParameters::makeServoParameters(node, ns = "moveit_servo")), e.g.
+#     `moveit_servo.joint_topic`. The spec §6.2 snippet is the *unflattened*
+#     dict form used by MoveIt's own launch files (`{"moveit_servo": {...}}`,
+#     which launch_ros flattens to the same dotted names); in a params FILE we
+#     have to spell the dotted names out.
+#
+# `joint_topic` is NOT in this file — lgw_full.launch.py is its only source,
+# derived from `follow` (true -> /feedback/joint_states, false ->
+# /control/joint_states). See the note further down for why.
+servo_node:
+  ros__parameters:
+    moveit_servo.move_group_name: arm
+    moveit_servo.planning_frame: base_link
+    moveit_servo.robot_link_command_frame: base_link
+    moveit_servo.ee_frame_name: tcp_link
+
+    moveit_servo.command_in_type: "speed_units"
+    moveit_servo.command_out_type: trajectory_msgs/JointTrajectory
+    moveit_servo.publish_joint_positions: true
+    moveit_servo.publish_joint_velocities: true
+    moveit_servo.publish_joint_accelerations: false
+    moveit_servo.command_out_topic: /arm_controller/joint_trajectory
+
+    # `moveit_servo.joint_topic` is intentionally absent here. This file's
+    # rules live under the node-specific `servo_node:` section, and rcl merges
+    # wildcard (`/**`) rules BEFORE node-specific ones regardless of
+    # --params-file order, so a launch-side dict override would silently lose
+    # to any value written here (measured 2026-10-28: `follow:=false` still
+    # left Servo on /feedback/joint_states). lgw_full.launch.py supplies the
+    # only value, derived from `follow`:
+    #     follow:=true  -> /feedback/joint_states  (real arm)
+    #     follow:=false -> /control/joint_states   (bench / mock)
+    moveit_servo.is_primary_planning_scene_monitor: false
+    moveit_servo.monitored_planning_scene_topic: /monitored_planning_scene
+
+    moveit_servo.incoming_command_timeout: 0.3
+    # 0.034 = MoveIt's own example value (30 Hz). Was 0.01 (100 Hz, matched to
+    # our 100 Hz control law). A/B under investigation 2026-10-30: at 100 Hz
+    # each servo cycle advances only twist*0.01, so any fixed per-cycle loss
+    # (state re-seed lag, JTC one-cycle delay) eats a 3.4x larger fraction than
+    # at 30 Hz. See docs/servo/2026-10-30-servo-speed-attenuation.md.
+    moveit_servo.publish_period: 0.034
+    moveit_servo.low_latency_mode: false
+    moveit_servo.num_outgoing_halt_msgs_to_publish: 4
+
+    moveit_servo.check_collisions: true
+    moveit_servo.collision_check_rate: 10.0
+    moveit_servo.self_collision_proximity_threshold: 0.02
+    moveit_servo.scene_collision_proximity_threshold: 0.03
+    # Servo 在 "URDF 限位 ± margin" 内就 halt。原 0.10 时真机反复出现
+    # "joint4/joint5 close to a position limit. Halting."(2026-11-16: 一次
+    # 运行 16 次),因为 QP 侧 0.30 的余量在跟随滞后 ~0.2-0.3 rad 下不够用。
+    # 收到 0.05:QP 侧仍守住 0.30,指令本身不会把关节推出去,这里只是把
+    # Servo 的否决线往限位方向挪 0.05 rad,让滞后有地方落。
+    moveit_servo.joint_limit_margin: 0.05
+    # lower/hard_stop singularity thresholds are NOT set here: lgw_full.launch.py
+    # supplies them (servo_singularity_lower / servo_singularity_hard_stop).
+    # Same reason as joint_topic above — a node-specific YAML value beats a
+    # wildcard launch override, so anything the launch must tune stays out.
+    moveit_servo.leaving_singularity_threshold_multiplier: 2.0
+    # MoveIt's own smoother. A pass-through replacement
+    # (lgw_servo_smoothing::NoOpSmoothing, same package we ship) was measured
+    # 2026-10-30 and changed the servo speed by ~10% at most, so the ~0.2x
+    # attenuation is NOT caused by smoothing — keep the upstream default rather
+    # than diverging. See docs/servo/2026-10-30-servo-speed-attenuation.md.
+    moveit_servo.smoothing_filter_plugin_name: "online_signal_smoothing::ButterworthFilterPlugin"
+    # Butterworth coefficient, read by the smoothing plugin from the NODE's
+    # namespace (not under moveit_servo.) — see butterworth_parameters.yaml.
+    #
+    # Smaller = less smoothing (the plugin's feedback term is 1 - coeff, so a
+    # small coeff is close to pass-through); validation requires > 1.0.
+    #
+    # This is a real speed limit, not a detail: applyJointUpdate() re-seeds the
+    # command from the joint_topic every cycle and then filters the ABSOLUTE
+    # position, so the filter's own history feeds back into its input. Measured
+    # 2026-10-30: with the 1.5 default every joint advanced a uniform x0.22 of
+    # the commanded step (independent of twist magnitude), capping the arm at
+    # ~0.27 rad/s while the twist asked for 2.6 rad/s. Singularity scaling,
+    # collision scaling and the IK/Jacobian choice were all ruled out first.
+    butterworth_filter_coeff: 1.01
+
+    moveit_servo.cartesian_command_in_topic: /servo_node/delta_twist_cmds
+    moveit_servo.joint_command_in_topic: /servo_node/delta_joint_cmds
+    moveit_servo.status_topic: /servo_node/status

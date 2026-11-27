@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  go2_gait_and_light_demo.xml — StandUp → BalanceStand →
+  SwitchGait(free_walk) → hold 2s → SwitchGait(static) → hold 2s →
+  SetLedBrightness(level=8) → SwitchGait(classic_walk, enable=true) →
+  hold 2s → SwitchGait(classic_walk, enable=false) → SwitchGait(static) →
+  StandDown.
+
+  2026-10-13 first-cut demo for the two new BT nodes:
+    - SwitchGait (publishes to /api/sport/request, 11 gaits supported
+      via the gait_name port)
+    - SetLedBrightness (publishes to rt/api/vui/request, 屏幕亮度 0-10)
+
+  Tree ID: Go2GaitAndLightDemo (PascalCase, matches the package
+  convention used by PickAndPlaceDemo / HeadToArmLookat /
+  Go2PostureDemo).
+
+  Nodes used:
+    - StandUp, StandDown, BalanceStand: BT StatefulActionNode, registered
+      in bt_plugin_registration.cpp.
+    - SwitchGait, SetLedBrightness: BT StatefulActionNode, registered
+      in bt_plugin_registration.cpp (2026-10-13).
+    - Sequence, ForceSuccess, RetryUntilSuccessful, Sleep: BT.CPP v4
+      built-in.
+
+  Topology:
+    Sequence "gait_demo_with_cleanup" (parent)
+      ForceSuccess "best_effort_round_trip"
+        Sequence "gait_round_trip" (happy path)
+          RetryUntilSuccessful num_attempts=3
+            StandUp                      (publish 1004, wait body_h >= 0.30 x5)
+          BalanceStand                  (publish 1002, fire-and-forget; REQUIRED
+                                          before any gait command — Go2 firmware
+                                          silently drops gait commands if mode != 1)
+          SwitchGait gait_name="free_walk"     → bridge publish 2045 (trigger, empty JSON)
+          Sleep msec=2000                      (hold free_walk for 2 s)
+          SwitchGait gait_name="static"        → bridge publish 1061 (trigger, empty JSON)
+          Sleep msec=2000                      (hold static for 2 s)
+          SetLedBrightness level="8"           → publish to rt/api/vui/request (api 1005)
+          SwitchGait gait_name="classic_walk" enable="true"   → publish 2049 with {"data": true}
+          Sleep msec=2000                      (hold classic_walk enabled for 2 s)
+          SwitchGait gait_name="classic_walk" enable="false"  → publish 2049 with {"data": false}
+          SwitchGait gait_name="static"        → back to a "safe" static gait before StandDown
+          RetryUntilSuccessful num_attempts=3
+            StandDown                    (publish 1005, wait body_h < 0.20 x5)
+      Sequence "gait_cleanup" (always runs; same A fix rationale as
+        go2_posture_demo.xml — guarantees dog goes down even if happy
+        path FAILURE'd mid-sequence)
+        RetryUntilSuccessful num_attempts=3
+          StandDown
+
+  Verification caveats:
+    - SwitchGait waits for lf/sportmodestate.gait_type != 0 for 3
+      consecutive frames (300 ms). 2 s deadline. On a fresh dog that
+      just stood up, gait_type starts at 0; after the SwitchGait
+      command the firmware should report non-zero (e.g. 1=trot for
+      TrotRun/FreeWalk per l4t/unitree_ros2/README.md:200-209, but
+      the v0.2.0+ gait id → gait_type mapping is undocumented — see
+      switch_gait_node.hpp "Prerequisites" comment).
+    - SetLedBrightness has no completion check (state setter). Look
+      at the dog EDU 头部屏幕 to verify brightness changed.
+    - WalkUpright / CrossStep / AutoRecoverSet are NOT in this demo
+      by default (hardware risk: rear-leg motors overheat; auto_recover
+      would auto-flip a head-camera + arm payload). Operator can add
+      them to the XML once they're confident about the payload.
+
+  Trigger:
+    ros2 action send_goal /lgw_bt_execution \
+      btcpp_ros2_interfaces/action/ExecuteTree \
+      "{target_tree: Go2GaitAndLightDemo}"
+-->
+<root BTCPP_format="4" main_tree_to_execute="Go2GaitAndLightDemo">
+  <BehaviorTree ID="Go2GaitAndLightDemo">
+    <Sequence name="gait_demo_with_cleanup">
+      <ForceSuccess name="best_effort_round_trip">
+        <Sequence name="gait_round_trip">
+          <RetryUntilSuccessful num_attempts="3">
+            <StandUp name="stand_up"/>
+          </RetryUntilSuccessful>
+          <BalanceStand name="balance_stand"/>
+          <SwitchGait name="enter_free_walk"
+                      gait_name="free_walk"/>
+          <Sleep name="hold_free_walk_2s" msec="2000"/>
+          <SwitchGait name="enter_static"
+                      gait_name="static"/>
+          <Sleep name="hold_static_2s" msec="2000"/>
+          <SetLedBrightness name="brighten_to_8"
+                            level="8"/>
+          <SwitchGait name="enter_classic_walk"
+                      gait_name="classic_walk" enable="true"/>
+          <Sleep name="hold_classic_walk_2s" msec="2000"/>
+          <SwitchGait name="exit_classic_walk"
+                      gait_name="classic_walk" enable="false"/>
+          <SwitchGait name="back_to_static"
+                      gait_name="static"/>
+          <RetryUntilSuccessful num_attempts="3">
+            <StandDown name="stand_down"/>
+          </RetryUntilSuccessful>
+        </Sequence>
+      </ForceSuccess>
+      <Sequence name="gait_cleanup">
+        <RetryUntilSuccessful num_attempts="3">
+          <StandDown name="stand_down_always"/>
+        </RetryUntilSuccessful>
+      </Sequence>
+    </Sequence>
+  </BehaviorTree>
+</root>

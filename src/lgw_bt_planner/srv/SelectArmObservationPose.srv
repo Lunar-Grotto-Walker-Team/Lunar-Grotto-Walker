@@ -1,0 +1,32 @@
+# SelectArmObservationPose.srv
+# 选最优 arm 观测位姿(由独立 service 节点计算)。
+#
+# 调用方:BT 节点 (SelectArmObservationPose thin shell)
+# 计算方:独立 service 节点 (select_arm_observation_pose_service_node)
+#
+# 输入:目标在 base_link 系下的 3D 坐标 + head 相机到目标的距离 +
+#      评分 / IK 参数。
+# 输出:选中 tcp_pose + 调试字段(α、r、n_reachable、...)。失败时 success=false,
+#      selected_tcp_pose_in_world 为空 / 默认,PoseStamped.header.frame_id="base_link"。
+#
+# 当前关节状态由 service 节点自订阅 /joint_states 缓存,**不通过 request 传入**
+# (2026-10-09 简化,避免 BT 黑板注入冗余)。
+
+# ===== Request =====
+geometry_msgs/Point target_world          # 目标在 base_link 下的 (x, y, z)
+float64 d_head                             # head 相机到目标距离 (m);
+                                           # BT 端从 last_head_obs.center_m 的 L2 算
+string preferred_ratios_csv                # "0.7,0.85,1.0,1.2"
+string preferred_alphas_deg_csv            # "90,60,45"
+int32 ik_call_timeout_ms                   # 单次 IK 超时(ms),默认 50
+string arm_base_frame                      # 机位 yaw 参考系,默认 "base_link"
+---
+
+# ===== Response =====
+bool success
+geometry_msgs/PoseStamped selected_tcp_pose_in_world   # success=false 时空 / 默认
+float64 selected_alpha_deg
+float64 selected_ratio
+int32 n_reachable
+int32 n_total_iterated                     # 实际跑的 IK 次数(早退出可 < 12)
+string message                             # debug / 错误信息

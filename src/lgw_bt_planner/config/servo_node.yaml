@@ -1,0 +1,353 @@
+# Defaults for lgw_bt_planner's servo_node (spec 2026-10-26 §7).
+#
+# Node name: `lgw_servo_node` (set by lgw_full.launch.py; also the rcl YAML
+# section key below). If Task 7 registers the node under another default name,
+# the launch-provided `-r __node:=lgw_servo_node` still makes this section
+# match, so keep the two in sync.
+#
+# lgw_full.launch.py appends `pose_watch_topic` derived from `follow`
+# (true -> /feedback/joint_states, false -> /control/joint_states); the value
+# here is only the bench default used when the node is started by hand.
+lgw_servo_node:
+  ros__parameters:
+    # --- lookat setpoint ---
+    # The pinned-posture family is the only rule (2026-11-10): the legacy
+    # base-relative orbit and the target-relative standoff were removed with
+    # their parameters. Tuning now lives in the posture_* block below.
+
+    # Hand-eye calibration JSON. Empty = <share>/calibration/arm_calibration.json
+    # (the _tcp variant; see calibration/arm_calibration.json).
+    arm_calibration_path: ""
+
+    # Effective gain of the published arm-base target. 1.0 = design default;
+    # set 0.7 to preserve the old arm-tier response until the bench
+    # revalidation is recorded.
+    arm_source_scale: 1.0
+
+    # --- tracker watchdog ---
+    # 2026-11-16: 500 -> 1200。远距离目标检出是"两三帧一簇、空 1.5-2 s"的
+    # 形态,500 ms 的新鲜度门限让 target_ok 跟着检测节奏抖;1.2 s 能跨过
+    # 这种正常间隙,同时仍能在一个多秒内发现 tracker 真的死了。
+    tracker_stream_timeout_ms: 1200
+
+    # --- control law (spec §7.6 / servo_control_law.hpp) ---
+    # 3.0, not 2.0: the command only saturates at e_pos = v_max/kp. At kp=2
+    # that was 0.225 m, i.e. the arm barely reacted until it had already fallen
+    # a hand-width behind (measured 2026-11-03: 0.147 m peak while walking).
+    # 3.0 saturates at ~0.3 m and recovers the error faster without touching
+    # the loop's stability (still below the 4 Hz-ish bandwidth of the
+    # 35 ms Servo lag; verify with a walking run before raising further).
+    kp_pos: 3.0
+    # 5.0: with kp_ang = 3.0 the angular channel only reached w_max at
+    # e_ang >= 0.33 rad (19 deg), so a 0.15 rad platform-induced error was
+    # corrected at ~0.2 rad/s (measured 2026-10-29).
+    kp_ang: 5.0
+    # v_max/w_max must match lgw_full.launch.py's servo_v_max/servo_w_max.
+    # Both are set here AND in the launch on purpose: this file's node-specific
+    # section wins over a wildcard launch dict, but if this file ever stops
+    # being loaded the launch dict is the fallback — keep the two equal so the
+    # effective value cannot depend on which one wins.
+    # 0.90 m/s, not 0.45. Servo's internal 35 ms lag attenuates the commanded
+    # Cartesian speed by ~0.5 at publish_period=0.034 (measured
+    # docs/servo/2026-10-30-servo-speed-attenuation.md §6.7), so the EFFECTIVE
+    # ceiling was 0.45 * 0.5 = 0.22 m/s — below Go2's 0.3-0.5 m/s walking
+    # speed. 0.90 puts the effective ceiling at ~0.45 m/s. The firmware caps
+    # the joints at ~1 rad/s (speed_percent=80), so the extra headroom is
+    # consumed before the arm's mechanical limit; watch the follower gap on
+    # the first walking run.
+    v_max: 0.90                  # m/s
+    w_max: 1.0                   # rad/s
+    deadband_pos_m: 0.01         # 1 cm
+    deadband_ang_rad: 0.034906585  # 2 deg
+    lowpass_cutoff_hz: 8.0
+
+    # --- which domain the control law's "current pose" comes from ----------
+    # command (default): FK of follow_reference_topic (/control/joint_states),
+    #   the SAME domain moveit_servo integrates its deltas in. Decision A'
+    #   (2026-10-28) applied to the look-at law: the command may lead the real
+    #   arm. The mock backend behaved this way implicitly (its TF WAS the
+    #   command). The topic backend broke that: TF became the real arm, which
+    #   trails by ~0.3 s, and the mismatch made the loop ring (2026-11-06).
+    # measured: TF, i.e. the real arm. Switch here to A/B the domains.
+    # Real-arm feedback stays in use either way for the follow monitor, the
+    # servo halts and the reported gap.
+    tcp_pose_domain: command
+
+    # --- measured-velocity damping (2026-11-06) ---------------------------
+    # The topic hardware backend makes the loop close on the REAL arm pose,
+    # which lags the command by ~0.3 s (driver transport). With kp 3.0/5.0 the
+    # loop then overshoots ~13 % and keeps ringing for ~1 s (measured step
+    # response: the arm crossed the command 9 times while settling).
+    # kd has units of SECONDS: the command loses kd * v_measured. Sizing rule:
+    # the derivative supplies atan(kd*wc) of phase lead against wc*tau of delay
+    # phase loss; with wc ~= kp_pos = 3 rad/s and tau = 0.3 s that is ~52 deg,
+    # i.e. kd ~ 0.4-0.5. Start at 0.30 and raise if the settle still rings.
+    # Applied ONLY when the law closes on the REAL arm, i.e.
+    # tcp_pose_domain: measured AND pose_watch is /feedback/joint_states.
+    # With tcp_pose_domain: command the loop is open again and there is no lag
+    # to compensate, so kd is skipped (it would inject the real arm's motion
+    # into an otherwise open loop).
+    kd_pos: 0.30                 # s
+    kd_ang: 0.30                 # s
+
+    # --- reference-velocity feed-forward (2026-11-05) ---------------------
+    # The desired tcp pose moves whenever the platform moves (world-fixed
+    # target). Without feed-forward the proportional term has to build up an
+    # error first, which is the steady lag seen while walking. The setpoint
+    # derivative is filtered with its OWN cutoff (a differentiator is noisier
+    # than the position loop) and added after the proportional clamp; the sum
+    # is capped by v_max_total/w_max_total. Inside the deadband the command is
+    # the feed-forward, NOT zero: zeroing it would stop the arm and re-open
+    # the error, which is a limit cycle.
+    ff_enable: true
+    ff_lowpass_hz: 8.0
+    ff_deadband_mps: 0.01
+    ff_deadband_radps: 0.01
+    ff_max_mps: 0.60
+    ff_max_radps: 0.80
+    v_max_total: 1.2
+    w_max_total: 1.6
+
+    # --- following monitor (spec §5.5) ---
+    # Servo integrates on the JTC/mock domain, so the real arm is a follower:
+    # compare /control (commanded) against /feedback (measured) and HOLD when
+    # it stops keeping up.
+    #
+    # follow_timeout_ms is the SUSTAINED time above `follow_tolerance_rad`
+    # before HOLD, not the size of the allowed gap. Measured 2026-10-30: this
+    # arm's follow time constant is ~1 s, so ANY command step produces a
+    # 0.15+ rad gap within 300 ms and tripped HOLD before the arm had a chance
+    # to accelerate (the servo loop was issuing a saturated 1.0 rad/s twist at
+    # the time). 8000 ms (raised from 5000) lets a normal acceleration
+    # transient through while still catching a genuinely stuck follower.
+    follow_timeout_ms: 8000
+    # 0.45 rad, not 0.15: the 0.15 value was smaller than the gap this arm
+    # produces on a normal acceleration transient (measured peak 0.20-0.24 rad
+    # during a planned move), so every command step looked like a fault.
+    follow_tolerance_rad: 0.45
+
+    # --- proximity guard (spec §7.6) ---
+    # 2026-11-17: XoY distance from the arm base origin; the gate now HOLDs
+    # (hold_reason=too_close) instead of only reporting too_close.
+    min_observe_distance_m: 0.20
+
+    # --- frames / topics ---
+    frame_prefix: "arm1/"
+    pose_watch_topic: "/control/joint_states"
+
+    # --- scanning (SCANNING state) ---
+    auto_scan: true
+    # 2026-11-16: 500 -> 1500。实测 5 分钟里 17 次 HOLD 有 11 次是"目标闪一下
+    # 就丢",而 11 次扫描全部在 1-2 s 内又找到了 —— 宽容期太短导致扫描/跟踪
+    # 反复切换。1.5 s 足以过滤掉瞬时丢帧。
+    scan_start_delay_ms: 1500
+    auto_resume_on_target: true
+    # 2026-11-16: 不再要求平台静止。开车时它永远不满足,扫描根本不会触发,
+    # 表现为"丢目标后一直卡在 HOLD"。
+    scan_require_base_static: false
+    # 扫描入位前的指令/实测对齐门限。原来复用 recovery 的 0.005 rad,
+    # 而正常跟随差是 0.1-0.5 rad —— 每次扫描都白等满 3 s 超时。
+    scan_presettle_gap_rad: 0.15
+    # Wrist-only Lissajous scan: j1 pinned at 0, j2/j3 at the observation
+    # posture, j4 pans (+-60 deg), j5 tilts (+-30 deg), j6 held.  The point
+    # is to widen the camera's effective field of view; the figure is smooth
+    # (no zero-velocity reversal) and periodic, so trajectories chain.
+    scan_j1_rad: 0.0               # sway centre
+    scan_j1_radius_rad: 0.349      # +-20 deg, one cycle per circle
+    # 2026-11-19: 0.890 -> 1.040 (+0.15 rad ≈ +8.6°)。j2 是肩部俯仰,
+    # 调大让扫描时的相机视角更朝地面(近距离目标更容易落到画面里)。
+    # 与 posture_j2_step_rad(0.150) 同粒度; 若还不够低继续 +0.15,
+    # 上限 posture_j2_max_rad=1.571。
+    scan_j2_rad: 1.040
+    scan_j3_rad: -0.720
+    # A circle in the (j4, j5) plane around the observation pose: the view
+    # sweeps a cone and never crosses its centre.
+    scan_j4_radius_rad: 1.2        # +-69 deg
+    scan_j5_radius_rad: 1.1        # +-63 deg (joint limit +-70)
+    # one full circle (2026-11-16: 8 -> 10; 2026-11-19: 10 -> 16)
+    scan_period_s: 16.0
+    # One trajectory holds duration/period whole figures (60/16 ≈ 3.75);
+    # it is re-published at the end.
+    scan_traj_duration_s: 60.0
+    scan_traj_sample_rate_hz: 50.0
+    scan_traj_max_velocity_rad_s: 2.5
+    scan_hold_s: 0.20
+    # j6 keeps the image upright while j4/j5 pan and tilt.
+    scan_roll_lock_enable: true
+
+    # One-shot startup check: the FK + arm_calibration.json chain used by the
+    # control law must agree with the TF chain the tracker walks (RSP tcp ->
+    # camera mount -> optical frame).
+    camera_tf_check_enable: true
+    camera_tf_frame: "camera_arm_color_optical_frame"
+    camera_tf_pos_tol_m: 0.01
+    camera_tf_ang_tol_rad: 0.0175
+    # Ingress (MoveGroup) only. 2026-11-16: 0.15/0.2 -> 1.0/1.0, 与 recovery
+    # 的 MoveGroup 缩放一致(那次入位在 15% 速度下要 1-2 s)。
+    scan_velocity_scaling: 1.0
+    scan_accel_scaling: 1.0
+    scan_tolerance_rad: 0.02
+
+    # ---------------------------------------------------------------
+    # Pinned-posture lookat family (spec 2026-10-30 rev2).
+    # j3/j5 are pinned, j1/j4/j6 solved per tick, j2 searched over candidates.
+    # ---------------------------------------------------------------
+    # Two wrist profiles (2026-11-05, scripts/lookat_axis_coverage.py +
+    # lookat_j3j5_sweep.py): primary -0.80 covers forward/level/up (cond 13-19
+    # from 0.5-1.6 m, +45 deg elevation); alt +0.60 covers close/low targets
+    # (<= 0.6 m at/below body height) that the primary cannot centre. Their
+    # failure regions do not overlap, so primary-then-alt covers the envelope.
+    # Solver selected ONCE at startup; no runtime switching or per-tick
+    # fallback (2026-11-05). "dls" is the field-proven posture family; "qp"
+    # enables the qpmad-based QP IK (spec 2026-11-05). Unknown values keep dls.
+    lookat_solver: qp
+    # QP weights (used only when lookat_solver: qp).
+    # SQP outer iterations. 8 -> 12 measured: coverage 95.2 % -> 97.6 %,
+    # mean solve 0.23 -> 0.47 ms, max 0.58 -> 3.05 ms. Saturates at 16.
+    qp_max_linearizations: 12
+    qp_w_aim: 1.0
+    qp_w_smooth: 0.01
+    qp_w_posture: 0.001
+    # Radius-vs-depression coupling. 0.40 measured best offline: coverage
+    # unchanged at close range, radius +35-45 %, cond p95 44.0 -> 39.2.
+    qp_w_radius: 0.40
+    qp_radius_near_m: 0.280
+    qp_radius_steep_m: 0.380
+    # Outside the frontal cone the soft target drops to this (no depression
+    # ramp there): looking sideways does not call for standing back.
+    # 0.30: side median radius 0.331 -> 0.284 (14 % closer) at cond p95 39.4,
+    # still 10 points below posture_cond_max 50. 0.25 would reach cond 49.9 --
+    # on the limit. Below ~0.30 the side p10 stops improving anyway.
+    qp_radius_side_m: 0.300
+    # Wrist branch floor: |j5| stays at least this far from the straight
+    # wrist singularity. 0.50 (was 0.60): the offline sweep
+    # (tests/test_qp_j5_sweep.cpp) shows the whole grid keeps 98.8 % coverage
+    # at 0.50 while the wrist actually uses the extra 0.10 rad on close
+    # targets, and the aim error improves (1.03 deg -> 0.35 deg at 0.40 m).
+    # Cost: cond p95 44.0 -> 45.9, max 48.7, against posture_cond_max 50.
+    # Do NOT go below 0.45: at 0.40 cond max hits 49.9 and at 0.20 coverage
+    # collapses to 83 % (the SQP cannot leave its reference posture).
+    qp_j5_branch_min_rad: 0.50
+    # Boundary tier: rear-bearing targets (|az| >= 155 deg) only exist at
+    # cond 57-68. Runs only when both strict passes fail, so a pose that
+    # already solves under cond_max is never replaced. Servo's hard stop is
+    # 100, so 70 leaves a 30% margin.
+    qp_cond_max_relaxed: 70.0
+    # Only relax for rear bearings (|azimuth| >= 140 deg). Without this gate
+    # a close target straight ahead could take a cond 50-70 pose on the first
+    # call instead of waiting one tick for its strict solution.
+    qp_relaxed_min_azimuth_rad: 2.4434609528
+    # Joint-limit margin for the QP. Servo halts at URDF_limit - 0.10; the
+    # DLS's 0.15 left only 0.05 rad for the tracking lag and Servo halted at
+    # joint5/joint4 on the real machine (2026-11-06). 0.20 measured 99%.
+    # 2026-11-16 曾抬到 0.30 来躲关节限位硬停,但那些硬停/FAULT 的真正原因是
+    # verify_servo_seed 拿指令域去比实测域(已修)。域修好之后这条不必再收紧,
+    # 恢复成 0.20 —— 姿态解的可达范围回到之前的水平。
+    qp_joint_margin_rad: 0.20
+    # Keep |j5| off the limit inside a branch (a setpoint at 1.07 rode the
+    # limit; solutions cluster at 0.60-0.95 anyway).
+    qp_j5_branch_max_rad: 0.95
+    # Try the positive wrist branch first when there is no history. The
+    # negative branch is still tried whenever it fails; the previous branch
+    # wins on every later tick (hysteresis).
+    qp_prefer_positive_branch: true
+
+    posture_j3_rad: -0.720
+    posture_j5_rad: -0.800
+    # Fallback keeps the field-proven 2026-10-30 posture: it is the only one
+    # measured to reach the far lateral bearings (+-140 deg) and it also
+    # centres close/low targets (cond 18-40 there).
+    posture_j3_alt_rad: -0.484
+    posture_j5_alt_rad: 0.600
+    # Uniform j2 candidate grid (rad) after the priority list. Finer than the
+    # old six-candidate list: some high-elevation poses were only reachable
+    # between those candidates.
+    posture_j2_step_rad: 0.150
+    posture_j2_nominal_rad: 0.890
+    posture_j2_min_rad: 0.150      # URDF 0 + 0.15: must stay ABOVE the Servo halt line (0.10)
+    posture_j2_max_rad: 1.571      # 90 deg
+    posture_cam_min_height_m: 0.200
+    posture_cam_max_radius_m: 0.400
+    # Radius floor, applied ONLY while the arm looks forward (|j1| <=
+    # posture_cam_frontal_sector_rad). Looking forward the camera stands back
+    # and frames the target; looking to the side it may come closer. The
+    # unconditioned 0.28 floor is gone: it cost 3.6 points of coverage and
+    # made targets within 0.30 m unreachable at every azimuth.
+    # 2026-11-16 临时关闭(原值 0.350):这是把相机往外推的下限,先拿掉看
+    # 跟踪时指令是否更稳。恢复时把 0.0 改回 0.350 即可。
+    posture_cam_min_radius_m: 0.0
+    posture_cam_frontal_sector_rad: 0.7854   # 45 deg half-angle: front 90 deg cone
+    # The floor ramps to zero over the next 10 deg instead of stepping at the
+    # edge, so a target crossing 45 deg does not flip the arm's posture.
+    posture_cam_frontal_taper_rad: 0.1745
+    # Inside the sector the floor also fades with target distance: full at
+    # 0.5 m, gone by 1.0 m.
+    posture_cam_floor_distance_near_m: 0.50
+    posture_cam_floor_distance_far_m: 1.00
+    posture_joint_margin: 0.150     # Servo halts at limit-0.10; keep 0.05 rad buffer
+    # Solver accept limit. Deliberately BELOW Servo's deceleration threshold
+    # (servo_singularity_lower, now 60): a pose the solver accepts must never
+    # put Servo into its deceleration band. Raising this without raising the
+    # Servo side re-creates the crawl it was meant to avoid.
+    posture_cond_max: 50.0
+    posture_aim_tol_rad: 0.035
+    posture_max_overrun_us: 4000.0  # solve budget; over it the previous pose is held
+    # --- takeover pre-position (spec §3.8 rev3), pinned_posture only ---
+    preposition_enable: true
+    preposition_joint_delta_rad: 0.15      # criterion 1
+    preposition_branch_delta_rad: 1.571    # criterion 2 fallback (main test: q5 sign flip)
+    preposition_limit_margin_rad: 0.10     # criterion 3
+    preposition_tcp_distance_m: 0.05       # criterion 4a
+    preposition_tcp_angle_rad: 0.15        # criterion 4b
+    # Velocity and acceleration are decoupled since 2026-11-04: TOTG is
+    # acceleration-limited for every move <= v^2/a, so 0.10/0.10 made a
+    # 0.46 rad recovery take 1.9 s. 0.30/0.50 => ~0.85 s (peak ~1.07 rad/s,
+    # inside the arm's measured ~1.2 rad/s).
+    preposition_velocity_scaling: 0.30
+    preposition_accel_scaling: 0.50
+    preposition_tolerance_rad: 0.02
+    preposition_timeout_s: 10.0
+
+    # --- HOLD recovery (spec 2026-11-03) --------------------------------
+    # Bounded MoveGroup move from HOLD: servo_halt / saturated move to the
+    # posture family; follower_lag never moves (freeze + wait). Requires the
+    # live platform to be stationary or slow (spec §14.1).
+    # This switch gates ONLY HOLD recovery. The takeover/resume Servo cache
+    # re-seed is an unconditional bug fix (2026-11-02) and stays active.
+    hold_recovery_enable: true
+    recovery_allow_target_lost: false     # last-known geometry recovery, opt-in
+    # 0 = no attempt cap (retry until the deadline).
+    recovery_max_attempts: 0
+    recovery_deadline_ms: 8000
+    # The two sentinels differ (spec §9): recovery_max_attempts = 0 removes
+    # the attempt cap (retry until the deadline), while recovery_deadline_ms =
+    # 0 DISABLES recovery. Real moves are still spaced out by
+    # recovery_retry_cooldown_ms either way.
+    recovery_retry_cooldown_ms: 2000
+    recovery_geometry_max_age_ms: 1500
+    follow_recovery_timeout_ms: 3000      # follower_lag wait budget
+    follow_resume_gap_rad: 0.10           # resume once the gap closes below this
+    follow_resume_stable_ms: 300          # ... for this long
+    # Recovery is deliberately NOT scaled like the takeover pre-position
+    # (0.30/0.50 there). A recovery runs from HOLD, where Servo is already
+    # paused and the arm is stationary, and the move is collision-checked by
+    # MoveGroup; the pre-position instead starts wherever the arm happens to
+    # be, under servo control, so it is slow on purpose. These went to
+    # 1.00/1.00 in the baseline-freeze commit 3001f71 -- if that was meant to
+    # be temporary, this is the line to change back.
+    recovery_velocity_scaling: 1.00
+    recovery_accel_scaling: 1.00
+    recovery_timeout_s: 8.0
+    recovery_tolerance_rad: 0.02
+    recovery_settle_ms: 200
+    # follow:=true: MoveGroup plans from /feedback, the JTC from /control.
+    # Wait for the real arm to catch up to the frozen JTC before the move,
+    # otherwise the JTC rejects the trajectory (allowed_start_tolerance 0.01).
+    recovery_presettle_gap_rad: 0.005
+    recovery_presettle_timeout_ms: 3000
+    # The gap must stay below recovery_presettle_gap_rad for this long before
+    # the goal is sent. A single-instant check raced the still-converging arm
+    # and the JTC rejected the trajectory on allowed_start_tolerance (0.01):
+    # measured 2026-11-05, joint1 drifted 0.016 rad between the check and the
+    # validation. Keeping 0.01 keeps the controller's safety check meaningful.
+    recovery_presettle_stable_ms: 250

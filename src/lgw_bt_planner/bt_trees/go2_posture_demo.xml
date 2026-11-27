@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  go2_posture_demo.xml — StandUp → SetBodyPose(forward-tilt) →
+  hold 2s → SetLedBrightness ramp (0→2→4→6→8→10, 2s each) →
+  SwitchGait round-trip (free_walk → classic_walk on → classic_walk
+  off → economic → static) → SetBodyPose(recenter pitch) → hold 2s
+  → clear_bridge → settle 1.5s → StandDown.
+
+  SetBodyPose is a BT::RosServiceNode thin shell over the standalone
+  body_pose_bridge_node (which holds the pose via 50Hz republish — see
+  docs/superpowers/specs/2026-10-10-body-pose-bridge-design.md). The
+  `clear="true"` instance cancels the bridge's 50Hz hold so StandDown
+  can take over the /api/sport/request channel.
+
+  2026-10-13 v7 简化:Go2 固件对 BodyHeight api(1013)bh_off 不响应
+  (真机验证 act body_h 在 bh_off=0 vs -0.18 几乎无差),SetBodyPose
+  移除 body_height 字段、bridge 3-call (Euler+BH+BalStand) 退化为
+  2-call (Euler+BalStand)、50Hz refresh 退化为 Euler-only。本树原
+  lower_bodyheight / hold_low_2s / recenter_bodyheight 步骤整段去掉,
+  body 升降需求由 StandUp 的身高档位(api 1004)覆盖。SetBodyPose
+  现在只做 rpy 倾斜演示。
+
+  2026-10-13 v8 增补 + v9 修订:用户要"完成前倾后打开灯光到10,
+  两秒后切换其他步态(灵动/经典/经济)",在 hold_tilt_2s 之后插
+  入 SetLedBrightness + SwitchGait 演示块。SwitchGait v9 改为
+  Pattern A(fire-and-forget)— Go2 固件接收 v0.2.0+ 新 gait
+  命令并目视执行,但不更新 lf/sportmodestate 的 gait_type /
+  mode / foot_speed_body 任何字段(deepwiki 引用 unitree_sdk2
+  _python 文档"Free gait family is decoupled from the classical
+  gait state machine ... expected firmware behavior, not a bug"),
+  所以完成判据只能 trust publish;官方 SportClient 也是 publish-
+  only 无 state verify,见 feedback_go2_new_gait_state_dead。bridge
+  50Hz Euler refresh 在 v8.2 测试中证伪不是根因(clear bridge 后
+  SwitchGait 仍然 FAILURE),但 v8.2 的 clear_before_light 步骤仍然
+  保留(让 channel 干净)。注意 free_walk / classic_walk / economic /
+  static 都是行走类 gait(mode-switch,不主动位移),不会让狗走开,
+  但操作者仍应准备好 StandDown 兜底(本树的 ForceSuccess + cleanup
+  子树正是为此)。
+
+  2026-10-14 v10:用户要"灯光从0到10变化,每次步进2,停留2秒",
+  原 SetLedBrightness level=10 + hold_bright_2s 单步改为 6 步
+  ramp:0→2→4→6→8→10,每步 publish VUI 1005 + 2s dwell,
+  total 12s。VUI SetBrightness 是 fire-and-forget(与 SwitchGait
+  同类 — 见 feedback_go2_new_gait_state_dead),不校验回执,
+  操作员目视亮度递增即可。
+
+  Tree ID: Go2PostureDemo (PascalCase, matches PickAndPlaceDemo /
+    HeadToArmLookat convention in this package).
+
+  Nodes used:
+    - StandUp, StandDown: BT StatefulActionNode, registered in
+      bt_plugin_registration.cpp (Tasks 2-3, 2026-10-10).
+    - SetBodyPose: BT::RosServiceNode<SetBodyPose>, registered in
+      bt_plugin_registration.cpp. Service implementation lives in
+      body_pose_bridge package.
+    - SwitchGait, SetLedBrightness: BT StatefulActionNode,
+      registered in bt_plugin_registration.cpp (2026-10-13). SwitchGait
+      publishes to /api/sport/request (api_id 1061/1062/1063/2045 +
+      flag 系列 2046-2051/2054),SetLedBrightness publishes to
+      rt/api/vui/request (api_id 1005,屏幕亮度 0-10)。
+    - Sequence, RetryUntilSuccessful, Sleep: BT.CPP v4 built-in, no
+      registration needed.
+
+  Topology:
+    Sequence "posture_demo_with_cleanup" (parent)
+      ForceSuccess "best_effort_round_trip"
+        Sequence "posture_round_trip" (happy path — all SUCCESS to return SUCCESS)
+          RetryUntilSuccessful num_attempts=3
+            StandUp           (publish 1004, wait body_h >= 0.30 x5)
+          SetBodyPose        rpy=[0, +0.30, 0]  → bridge enters HOLDING + 50Hz Euler republish
+          Sleep msec=2000    (hold the tilt for 2 s; bridge keeps republishing)
+          SetBodyPose        clear=true         → bridge IDLE, cancel 50Hz timer, 释放 /api/sport/request 通道
+          Sleep msec=500     (let bridge settle IDLE before gait switch)
+          SetLedBrightness   level=0,2,4,6,8,10 → 6 步 ramp,每步 publish VUI 1005,fire-and-forget
+          Sleep msec=2000    (×6,每步 dwell 2 s; ramp total 12 s)
+          SwitchGait         gait_name=free_walk             → bridge publish 2045 trigger (灵动)
+          Sleep msec=2000    (hold free_walk for 2 s)
+          SwitchGait         gait_name=classic_walk enable=true → bridge publish 2049 flag (经典)
+          Sleep msec=2000    (hold classic_walk enabled for 2 s)
+          SwitchGait         gait_name=classic_walk enable=false → bridge publish 2049 flag (退经典)
+          SwitchGait         gait_name=economic              → bridge publish 1063 trigger (续航)
+          Sleep msec=2000    (hold economic for 2 s)
+          SwitchGait         gait_name=static                → bridge publish 1061 trigger (回安全 gait)
+          SetBodyPose        rpy=[0, 0, 0]      → bridge live-updates target (pitch recenter)
+          Sleep msec=2000    (hold the recentered pose for 2 s)
+          SetBodyPose        clear=true         → bridge cancels timer + sends final neutral
+          Sleep msec=1500    (let servo settle)
+          RetryUntilSuccessful num_attempts=3
+            StandDown        (publish 1005, wait body_h < 0.20 x5)
+      Sequence "posture_cleanup" (always runs after the wrapper; 2026-10-10
+        A fix — guarantees release of /api/sport/request and a physical
+        down-state even if the happy path FAILURE'd mid-sequence.)
+        SetBodyPose        clear=true         → release bridge HOLDING if any
+                                              (idempotent: "clear_already_idle")
+        RetryUntilSuccessful num_attempts=3
+          StandDown                          → physical fail-safe: dog down
+
+  SetBodyPose semantics: SetBodyPose is a BT::RosServiceNode client
+  that delegates to body_pose_bridge_node. The bridge holds the
+  Go2's rpy via 50Hz republish of Euler(1007) (v6 drop-BalanceStand-
+  from-refresh; v7 2026-10-13 drop-BodyHeight-from-refresh — see
+  feedback_go2_bodyheight_1013_unresponsive), with a one-shot
+  Euler+BalanceStand pair fired in handle_set_body_pose to latch
+  entry into balance mode. The pair is bundled because the Go2
+  state machine latches rpy at BalanceStand time (sending Euler
+  AFTER BalanceStand is silently dropped — this is the 2026-10-10
+  lesson; see `unitree_sdk2/example/go2/go2_sport_client.cpp:63-67`
+  case `balance_stand` annotated "controlled by dBodyHeight + rpy"
+  — the SDK comment mentions body_h but Go2 firmware does not honor
+  it, hence v7 simplification).
+
+  v7 lifecycle (2026-10-13, supersedes v6's 3-call + Euler+BH refresh):
+  handle_set_body_pose fires the 2-call (Euler+BalStand) + starts
+  the Euler-only refresh timer + returns SUCCESS immediately. BT
+  owns lifecycle: successive SetBodyPose calls live-update target
+  rpy (no BalanceStand re-entry, no BodyHeight); clear=true cancels
+  the refresh timer + sends a final neutral pair.
+
+  Sign conventions (verified on real hardware 2026-10-10):
+    - pitch: Go2 firmware INVERTS the standard right-hand rule.
+      pitch>0 = nose DOWN, pitch<0 = nose UP. XML uses pitch=+0.30
+      (~+17°) for "forward-tilt down". Original spec used +0.5236
+      (~30°) but starting from rpy=[0,-0.090,*] that's a 35° pitch
+      swing — generous tolerance (±0.05 rad) gave the dog only a
+      narrow ~3° window to settle in. Dropped to +0.30 rad (~17°)
+      on 2026-10-10 as the BCD fix; raise back toward 0.5236 once
+      Go2 firmware stability at extreme pitches is re-verified.
+    - (v7 removed) body_height offset: was used for the
+      lower/recenter body_h step. Range [-0.18, +0.03] per Go2
+      spec, but the firmware is a dead control (no observed
+      response to bh_off) so the field was removed from the
+      .srv interface and the corresponding demo steps were
+      removed from this tree.
+
+  Retry rationale: StandUp/StandDown may fail transiently if the
+  machine is mid-motion when the BT tick fires. 3 retries gives a
+  cheap robustness bump without hiding real faults. SetBodyPose
+  steps are NOT wrapped in retry — a single FAILURE aborts the
+  demo so the operator notices.
+
+  Recovery rationale (2026-10-10 A fix): the inner Sequence is
+  wrapped in <ForceSuccess> with an always-run cleanup subtree
+  after it. Trade-off: BT.CPP v4 has TryCatch but it forces
+  FAILURE on the catch path, and RecoveryNode is not built-in
+  in v4 (it's only in nav2_behavior_tree). ForceSuccess is
+  the simplest way to express "always run the cleanup subtree,
+  regardless of whether the happy path failed or succeeded".
+  Consequence: if the happy path FAILS but the cleanup subtree
+  SUCCEEDS, the action result is SUCCESS (dog is in safe down
+  state), and the operator sees no failure. This is intentional
+  — for a one-shot posture demo the dog being safely down is
+  the only outcome we care about. If the cleanup subtree itself
+  fails (dog won't go down), the outer Sequence propagates that
+  FAILURE to the action result and the operator sees a real
+  fault.
+
+  The bridge-clear step in the cleanup subtree is the one that
+  actually addresses the 2026-10-10 incident: without it, a
+  mid-tree FAILURE (e.g. SetBodyPose SERVICE_TIMEOUT) would leave
+  the bridge HOLDING at the commanded rpy, and StandDown's 1005
+  publish would be stomped by the bridge's 50Hz Euler republish
+  on every tick until the bridge process dies. With the cleanup,
+  we explicitly cancel the bridge BEFORE StandDown, transferring
+  ownership of /api/sport/request back to the StandUp/StandDown
+  BT nodes.
+
+  Trigger:
+    ros2 action send_goal /lgw_bt_execution \
+      btcpp_ros2_interfaces/action/ExecuteTree \
+      "{target_tree: Go2PostureDemo}"
+-->
+<root BTCPP_format="4" main_tree_to_execute="Go2PostureDemo">
+  <BehaviorTree ID="Go2PostureDemo">
+    <Sequence name="posture_demo_with_cleanup">
+      <ForceSuccess name="best_effort_round_trip">
+        <Sequence name="posture_round_trip">
+          <RetryUntilSuccessful num_attempts="3">
+            <StandUp name="stand_up"/>
+          </RetryUntilSuccessful>
+          <SetBodyPose name="tilt_forward_down"
+                       roll="0.0" pitch="0.30" yaw="0.0"
+                       tolerance_rpy="0.05"/>
+          <Sleep name="hold_tilt_2s" msec="2000"/>
+          <!-- v8.2 (2026-10-13): 假设测试 — bridge 50Hz Euler 一直
+           在 HOLDING,占住 /api/sport/request 通道,SwitchGait 命令
+           被 50Hz Euler 刷新踩掉,gait_type 一直 0 → timeout。
+           v8.1 试 rpy=0 归位(bridge 还在 50Hz 刷 rpy=0)没用。
+           v8.2 改 clear=true:把 bridge 完全 IDLE,50Hz timer cancel,
+           只发最后一次 Euler(0,0,0)+BalStand 收尾,通道释放后
+           再做 SwitchGait。recenter_pose 步骤在 gait demo 之后还
+           在(把狗拉回中立再走 clear_bridge→StandDown 流程)。 -->
+          <SetBodyPose name="clear_before_light" clear="true"/>
+          <Sleep name="hold_clear_before_light" msec="500"/>
+          <SetLedBrightness name="brighten_to_0"
+                            level="0"/>
+          <Sleep name="hold_step_0" msec="2000"/>
+          <SetLedBrightness name="brighten_to_2"
+                            level="2"/>
+          <Sleep name="hold_step_1" msec="2000"/>
+          <SetLedBrightness name="brighten_to_4"
+                            level="4"/>
+          <Sleep name="hold_step_2" msec="2000"/>
+          <SetLedBrightness name="brighten_to_6"
+                            level="6"/>
+          <Sleep name="hold_step_3" msec="2000"/>
+          <SetLedBrightness name="brighten_to_8"
+                            level="8"/>
+          <Sleep name="hold_step_4" msec="2000"/>
+          <SetLedBrightness name="brighten_to_10"
+                            level="10"/>
+          <Sleep name="hold_step_5" msec="2000"/>
+          <SwitchGait name="enter_free_walk"
+                      gait_name="free_walk"/>
+          <Sleep name="hold_free_walk_2s" msec="2000"/>
+          <SwitchGait name="enter_classic_walk"
+                      gait_name="classic_walk" enable="true"/>
+          <Sleep name="hold_classic_walk_2s" msec="2000"/>
+          <SwitchGait name="exit_classic_walk"
+                      gait_name="classic_walk" enable="false"/>
+          <SwitchGait name="enter_economic"
+                      gait_name="economic"/>
+          <Sleep name="hold_economic_2s" msec="2000"/>
+          <SwitchGait name="back_to_static"
+                      gait_name="static"/>
+          <SetBodyPose name="recenter_pose"
+                       roll="0.0" pitch="0.0" yaw="0.0"
+                       tolerance_rpy="0.05"/>
+          <Sleep name="hold_recenter_2s" msec="2000"/>
+          <SetBodyPose name="clear_bridge" clear="true"/>
+          <Sleep name="settle_after_recenter" msec="1500"/>
+          <RetryUntilSuccessful num_attempts="3">
+            <StandDown name="stand_down"/>
+          </RetryUntilSuccessful>
+        </Sequence>
+      </ForceSuccess>
+      <Sequence name="posture_cleanup">
+        <SetBodyPose name="clear_bridge_always" clear="true"/>
+        <RetryUntilSuccessful num_attempts="3">
+          <StandDown name="stand_down_always"/>
+        </RetryUntilSuccessful>
+      </Sequence>
+    </Sequence>
+  </BehaviorTree>
+</root>

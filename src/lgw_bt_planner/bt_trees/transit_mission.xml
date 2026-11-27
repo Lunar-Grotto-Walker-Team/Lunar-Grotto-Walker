@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  transit_mission.xml — 摆渡任务：走到局部坐标 (X, Y)，再把朝向摆回起始朝向。
+
+  ┌─ 现场怎么用 ────────────────────────────────────────────────┐
+  │ 1. 起 A+C（point_lio + Nav2；A 用 start_chain.sh 带 warmup 参数起，
+  │    门控态）。**B 地形链不需要** —— 摆渡只走
+  │    local costmap + FollowPath/Spin，不碰 /terrain_traversability
+  │    和全局代价地图。start_chain.sh 会连 B 一起起，A+B+C 太慢，
+  │    现场可以手工分开起。
+  │ 2. 遥控器让狗站起来
+  │ 3. 起本任务： bash /my_ws/l4t/lg_walker_ws/scripts/start_transit_mission.sh
+  │ 4. 改下面 value 里的两个数，然后 colcon build - -packages-select \
+  │    lgw_bt_planner（install 是拷贝安装，改 XML 不会即时生效）
+  │ 5. ros2 action send_goal /transit_bt_execution \
+  │      btcpp_ros2_interfaces/action/ExecuteTree "{target_tree: TransitMission}" - -feedback
+  │    （transit_mission.launch.py 默认 action_name 已改成 transit_bt_execution，
+  │      与机械臂链的 /lgw_bt_execution 错开，两套 bt_runner 可同时在线）
+  └───────────────────────────────────────────────────────────┘
+
+  坐标含义：**以树启动那一刻狗站的位置为原点、那一刻的朝向为 x 轴正向**
+    按 ROS base_link 约定：X = 往正前方多少米，**Y = 往左多少米**（往右写负数）。
+    例：洞口在左前方就写成 `(X正, Y正)`。
+    注意不要填 odom 系绝对坐标 —— odom 的原点是雷达位姿服务启动的位置，
+    可能离你有上百米远。
+
+  朝向：到点后自动转回树启动那一刻的朝向（transit 侧的 align_yaw）——
+        狗在基地原点朝基地 x 正方向摆好时，"树启动那一刻的朝向"就是基地
+        x 轴，所以到洞口后机头自然与基地 x 轴平行，不需要额外的 rotate。
+
+  2026-11-20 合并 StartMapping：树的第一条是 StartMapping，触发 point_lio
+  的 /start_mapping（对应 A 端 wait_for_start 门控）。它**放在 Retry 之外**：
+  触发失败（A 没起 / 跨域）应当整棵树直接 FAILURE，而不是被重试掩盖——
+  狗以为在建图、而 LIO 还在丢数据，正是要避免的事故。
+
+  重试：RetryUntilSuccessful num_attempts="3" = 首次 + 2 次重试，总共 3 次。
+        transit_node 在这套 launch 里 max_retries 覆盖为 0，所以只有这一层重试。
+
+  不在这里做的事：站/卧（人手动控制）、障碍物绕行（归 nav2 的行为树）、
+  启动自主探索。
+
+  SetPoseStamped 的 frame_id 必须写 "local" —— TransitToLocalPoint 只认这个
+  字面量，写成 odom/base_link 之类会直接 FAILURE，避免把绝对坐标当局部坐标用。
+-->
+<root BTCPP_format="4" main_tree_to_execute="TransitMission">
+  <BehaviorTree ID="TransitMission">
+    <Sequence>
+      <!-- 解除 point_lio 的 wait_for_start 门控；失败 = 整树 FAILURE -->
+      <StartMapping name="start_mapping"/>
+
+      <RetryUntilSuccessful num_attempts="3">
+      <Sequence>
+        <!-- ===== 比赛当天只改这一行 =====
+             2026-11-27 临时改成 0.5 m 直行（原现场洞口坐标 2.43, 0.52），
+             用于近距离实测摆渡链；验证完记得改回 2.43;0.52。 -->
+        <SetPoseStamped name="set_goal"
+                        output_key="goal_local"
+                        value="local;0.5;0.0;0.0;0;0;0;1"/>
+        <!-- value 格式：frame;x;y;z;qx;qy;qz;qw
+             x = 往正前方米数，y = 往左米数，z 与四元数固定为 0,0,0,0,1 -->
+
+        <TransitToLocalPoint name="go_there"
+                             goal="{goal_local}"
+                             result_reason="{transit_reason}"/>
+      </Sequence>
+      </RetryUntilSuccessful>
+    </Sequence>
+  </BehaviorTree>
+</root>

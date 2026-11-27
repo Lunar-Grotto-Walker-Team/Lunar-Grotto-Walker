@@ -1,0 +1,105 @@
+<!--
+  track_collect_reactive_v2.xml — 洞穴采集任务的完整流程(2026-11-20 改版)。
+
+  ══ 流程 ══════════════════════════════════════════════════════
+    init     开夹爪 -> 钉基地屏蔽圈 -> 释放遗留选中 -> 记录基地圆心
+             -> samples:=0 -> 臂回 home -> 站起 -> 平衡站立 -> 经典步态
+             -> 接管伺服(best-effort)
+    ①  摆渡    <SubTree ID="TransitMission"/>  基地 -> 洞口(2.43, 0.52)
+    ②  巡逻    <SubTree ID="TransitPatrol"/>   洞口沿 +X 前进 3 m -> 回洞口
+                                               **途中可被采集任务打断**
+    ③  返回    <SubTree ID="TransitReturn"/>   洞口 -> 基地(-2.43, -0.52)
+    ④  卸货    unload_gate                     samples>0 时趴下卸货
+   结束。整棵树只跑一趟(不再是 Repeat 常驻), 这是 2026-11-20 用户要求。
+
+  ══ 关键设计 ══════════════════════════════════════════════════
+  * 采集逻辑在 collect_one.xml(ID CollectOne)里, 巡逻与(以前的)轮询共用
+    同一份实现, 不要在这里再写一遍。
+  * 打断: transit_patrol.xml 用 ReactiveFallback 把"采集"放在"驱动"左边。
+    BT.CPP 4.9 的 ReactiveFallback 在子节点 RUNNING 时会 halt 其它子节点,
+    所以目标一进 0.55 m 带, Nav2 目标立刻被 cancel(TransitToLocalPoint::
+    onHalted -> async_cancel_all_goals), 狗停下 -> 采集 -> 继续把这一腿
+    剩下的路走完(靠 TransitToLocalPoint 的 keep_origin=true 端口)。
+  * 交付给 MoveIt 之前一定先 ServoRelease; 让伺服和 MoveGroup 同时驱动
+    /arm_controller 会把它打成 HOLD, 而 HOLD 只能靠 RELEASE 出来
+    (ServoTakeover 只接受 IDLE)。这条不变式在 collect_one.xml 里维护。
+  * init 的 ServoTakeover 包 ForceSuccess: 启动时选中的目标可能还在远处,
+    preposition 解不出注视位姿会拒绝接管 —— 那不该打死整棵树。每个目标
+    真正采集前, CollectOne 内部还会再接管一次。
+
+  ══ 依赖 ══════════════════════════════════════════════════════
+  * point_lio(A, 门控态) + Nav2(C): TransitMission 里的 StartMapping 与
+    所有 TransitToLocalPoint 都需要。未就绪时树在 init 直接 FAILURE,
+    不会带着"没建图"的状态去采集。
+  * go2_transit/bt_plugins: bt_runner 的 plugins 参数里必须加载,
+    否则 transit_*.xml 解析失败, 本树创建不出来。
+  * 伺服 + MoveIt + 臂相机 + /perception/tracks/unified: 采集链路。
+-->
+<root BTCPP_format="4" main_tree_to_execute="TrackCollectReactiveV2">
+  <BehaviorTree ID="TrackCollectReactiveV2">
+    <Sequence name="init_then_mission">
+      <ControlGripper target_width="0.1"/>
+      <!-- 基地屏蔽圈: 把圆心钉在"任务起点"这一时刻机器人的 odom 位置。
+           tracker 据此丢弃圆心 2.5 m 内的新观测, 避免基地里已采集/堆放的目标
+           被重复识别成新目标。用 ForceSuccess 包住: TF 还没准备好时不该
+           把整棵树的初始化断掉(tracker 侧会打 warn)。 -->
+      <ForceSuccess>
+        <MarkTrack track_id="0" action="6"/>
+      </ForceSuccess>
+      <!-- 2026-11-20 真机: 释放上一轮遗留的选中目标(action=4, id=0)。
+           tracker 的选目标是粘性的(_select_if_needed 只在 id==0 时重挑),
+           上一轮被取消/中断时留下的目标可能已经离得很远(实测 1.26 m),
+           init 的 ServoTakeover 会拿它去解注视位姿 -> QP "no legal pose"
+           -> 接管被拒 -> 整棵树 FAILURE。释放后 tracker 会按 select_target()
+           重新挑一个当前最合适的。 -->
+      <ForceSuccess>
+        <MarkTrack track_id="0" action="4"/>
+      </ForceSuccess>
+      <!-- 行为树自己也记一份基地圆心(odom 系), 供 IsWithinBaseRadius 判断
+           "回没回到基地"。同样 ForceSuccess: TF 未就绪时不该断掉初始化,
+           只是这一轮不会触发卸货。 -->
+      <ForceSuccess>
+        <RecordBasePose output_key="base_center"/>
+      </ForceSuccess>
+      <!-- 已采集样品计数(每次放置成功后 +1; 回基地卸货完清零)。 -->
+      <Script code="samples := 0"/>
+      <MoveArmToNamed named_target="home" named_targets="{@named_targets}"/>
+      <StandUp/>
+      <BalanceStand/>
+      <SwitchGait gait_name="classic_walk" enable="true"/>
+      <ForceSuccess><ServoTakeover/></ForceSuccess>
+
+      <!-- ① 基地 -> 洞口。StartMapping(解除 point_lio 的 wait_for_start
+           门控) -> local(2.43, 0.52) -> Nav2。不加 ForceSuccess:
+           transit_mission 的原设计就是"触发建图失败 = 整棵树 FAILURE"。 -->
+      <!-- _autoremap="true": 子树黑板默认不向父黑板查找, 只有 autoremapping_
+           为真时 getEntry 才回落。TransitPatrol 要读 {track_id}, 所以要开。 -->
+      <SubTree ID="TransitMission" _autoremap="true"/>
+
+      <!-- ② 洞口 -> 前进 3 m -> 回洞口, 途中可被采集打断。 -->
+      <SubTree ID="TransitPatrol" _autoremap="true"/>
+
+      <!-- ③ 洞口 -> 基地。局部原点 = ②结束时的洞口位姿, 目标取 ①的相反数。 -->
+      <SubTree ID="TransitReturn" _autoremap="true"/>
+
+      <!-- ④ 原有卸货: samples>0 且回到基地圆心 0.25 m 内时趴下卸货。
+           卸货期间机械臂由 MoveIt 驱动, 所以先释放 Servo。 -->
+      <Fallback name="unload_gate">
+        <Sequence name="unload_at_base">
+          <ScriptCondition code="samples > 0"/>
+          <IsWithinBaseRadius radius_m="0.25"/>
+          <ServoRelease/>
+          <BalanceStand/>
+          <StandDown/>
+          <SubTree ID="UnloadHandle"/>
+          <StandUp/>
+          <BalanceStand/>
+          <SwitchGait gait_name="classic_walk" enable="true"/>
+          <Script code="samples := 0"/>
+          <ServoTakeover/>
+        </Sequence>
+        <AlwaysSuccess/>
+      </Fallback>
+    </Sequence>
+  </BehaviorTree>
+</root>

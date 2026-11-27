@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  head_to_arm_verify_grasp.xml — 仿照 head_to_arm_lookat.xml,在 "arm
+  也看到目标" 这一步插入 head/arm 一致性核实 + 基于核实坐标的抓取。
+
+  启动方式:BT runner 加载本 XML 后,verify_grasp_cycle 立即开始循环;
+  不需要 send_goal 也不需要 /bt_user_input 触发(2026-10-07 起去掉
+  最外层 WaitForUserInput,start 脚本也不再发 /bt_user_input)。用户
+  Ctrl-C start 脚本 → trap 走 cleanup_on_signal → kill bt_runner
+  进程 → Repeat 自然终止。
+
+  循环逻辑(spec):
+    - head 看到目标:
+        → ComputeLookatPose + MoveArmToPose 把 arm 相机光轴对准目标
+        → 输出 lookat_pose (PoseStamped) 到黑板,作为后续 arm→world
+          核实时所需的 tcp 在 world 系下的位姿
+    - 检测 arm 是否也看到:
+        - 看到 → VerifyHeadArmConsistency
+            把 head/arm 各自观测转到 world 系,比较欧氏距离
+            误差 ≤ max_distance_m (默认 0.05) → SUCCESS,写出
+              arm_target_world (Point) + consistency_error_m
+            误差 > max_distance_m → FAILURE
+          → ComputeGraspPose
+            读 arm_target_world (前一步刚写),重算以 arm_target_world
+            为目标、以 ee_position_world 为 anchor 的 lookat 方向,得
+            R_tcp;输出 grasp_pose (PoseStamped),位置 = arm_target_world,
+            姿态 = lookat 姿态
+          → MoveArmToPose 到 grasp_pose → gripper_open → gripper_close
+        - 没看到 / 误差过大 → 跳过抓取步骤
+    - 不论如何回 home,进入下一轮
+
+  结构:
+    Repeat num_cycles="-1"          (Ctrl-C start 脚本 = 终止循环)
+      child: Sequence "verify_grasp_cycle"
+        step 1: Fallback "if_head_seen_align"
+                child 1: Sequence "align_step"
+                           IsHeadDetectionConfirmed
+                           ComputeLookatPose
+                           MoveArmToPose
+                child 2: ForceSuccess "head_not_seen_skip"
+        step 2: Fallback "if_arm_seen_verify_grasp"
+                child 1: Sequence "verify_and_grasp_step"
+                           Sleep 1500ms                   (arm 相机 settle)
+                           IsArmDetectionConfirmed
+                           VerifyHeadArmConsistency
+                           ComputeGraspPose
+                           MoveArmToPose
+                           MoveArmToNamed "gripper_open"
+                           MoveArmToNamed "gripper_close"
+                child 2: ForceSuccess "arm_not_seen_or_inconsistent_skip"
+        step 3: MoveArmToNamed "return_home"          (named_target="home")
+
+  设计说明:
+    - 用标准 Fallback (非 ReactiveFallback) 做 if-then-else,跟
+      head_to_arm_lookat.xml 保持一致;理由:Once the head/arm 检测本轮
+      内被读取并返回 SUCCESS,后面 Compute*/MoveArm* 不会被 mid-tick 打
+      断。ReactiveFallback 每 tick 重评 child 1,容易在 obs_age 边界翻
+      转导致正在执行的 MoveArmToPose 被 onHalt() cancel。
+    - 失败路径用 ForceSuccess 把 "未命中" / "不一致" 转 SUCCESS,
+      Sequence 顺利推进;MoveArmToPose 真的 IK 失败仍会 FAILURE →
+      Fallback 走 child 2 → ForceSuccess 转 SUCCESS → Sequence 继续
+      → 仍能回 home。
+    - VerifyHeadArmConsistency 内部总是写 arm_target_world 到黑板
+      (无论 SUCCESS/FAILURE);ComputeGraspPose 读这个 key 时,
+      VerifyHeadArmConsistency 必须先 SUCCESS 才能保证 Sequence 走到
+      下一步。这是 BT Sequence 的标准顺序保证语义。
+    - step 2 的 Sleep msec=1500 给 arm 相机一个独白窗口,机械臂到位
+      后的新视角下 depth buffer 填充满,避免 verify 阶段 P_arm_world
+      帧间散射(2026-10-07 加)。
+
+  Pose literal 格式(SetPoseStamped):frame_id;x;y;z;qx;qy;qz;qw
+  参考系:world (== base_link, world→base_link fixed joint xyz=0 rpy=0)
+
+  抓取 named_target 来自 SRDF(agx_arm.srdf / .srdf.xacro):
+    gripper_open / gripper_half / gripper_close 在
+    <xacro:if value="$(eval effector_type == 'agx_gripper')"> 块。
+    路由由 named_target_loader.cpp:23-24 根据 group= 属性自动选择
+    planning group。
+-->
+<root BTCPP_format="4" main_tree_to_execute="HeadToArmVerifyGrasp">
+  <BehaviorTree ID="HeadToArmVerifyGrasp">
+    <Repeat name="auto_loop" num_cycles="-1">
+      <Sequence name="verify_grasp_cycle">
+        <!-- step 1: head 看到 → 计算 lookat pose 并移动 arm 对准
+                     (输出 lookat_pose 到黑板,作为 verify 时的
+                      tcp 在 world 系下的参考) -->
+        <Fallback name="if_head_seen_align">
+          <Sequence name="align_step">
+            <IsHeadDetectionConfirmed name="check_head"
+              topic_name="/perception/two_stage/camera_head/result"
+              max_age_sec="0.3"
+              last_observation="{last_head_obs}"/>
+
+            <ComputeLookatPose name="compute_lookat"
+              head_observation="{last_head_obs}"
+              ee_position_world="0.5;0.0;0.3"
+              world_frame="world"
+              output_pose_key="lookat_pose"/>
+
+            <MoveArmToPose name="move_to_lookat" goal="{lookat_pose}"/>
+          </Sequence>
+          <ForceSuccess name="head_not_seen_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+
+        <!-- step 2: arm 也看到 → 核实 head/arm 一致 → 基于核实坐标抓取
+                     没看到 / 误差过大 → 跳过抓取步骤
+                     注意:step 1 的 MoveArmToPose 完成后,arm 相机刚到新视角,depth
+              需要时间稳定(自动曝光 + 深度 buffer 填充新视野),YOLOE 在 30~50cm 近距
+              的 center_m 估计容易跳变。前置 Sleep 给 arm 相机一个独白窗口再读
+              observation,降低 verify 阶段 P_arm_world 的帧间散射
+                     (1.5s ≈ 22 帧@15fps,Realsense + YOLOE 都来得及)。 -->
+        <Fallback name="if_arm_seen_verify_grasp">
+          <Sequence name="verify_and_grasp_step">
+            <Sleep name="settle_arm_camera" msec="1500"/>
+
+            <IsArmDetectionConfirmed name="check_arm"
+              topic_name="/perception/two_stage/camera_arm/result"
+              max_age_sec="0.3"
+              last_observation="{last_arm_obs}"/>
+
+            <!-- 核实 head/arm world 系位置误差 ≤ max_distance_m
+                 写出 arm_target_world (Point) 到黑板,
+                 供下一步 ComputeGraspPose 直接使用 -->
+            <VerifyHeadArmConsistency name="verify_consistency"
+              head_observation="{last_head_obs}"
+              arm_observation="{last_arm_obs}"
+              tcp_pose_in_world="{lookat_pose}"
+              max_distance_m="0.05"/>
+
+            <!-- 读 arm_target_world + ee_position_world,重算 lookat
+                 方向 + uprightness flip,得 grasp 姿态;
+                 tcp 直接到 arm_target_world (不补偿 t_a2t) -->
+            <ComputeGraspPose name="compute_grasp"
+              arm_target_world="{arm_target_world}"
+              ee_position_world="0.5;0.0;0.3"
+              world_frame="world"
+              output_pose_key="grasp_pose"/>
+
+            <MoveArmToPose name="move_to_grasp" goal="{grasp_pose}"/>
+
+            <MoveArmToNamed name="open_gripper"
+              named_target="gripper_open"
+              named_targets="{@named_targets}"/>
+
+            <MoveArmToNamed name="close_gripper"
+              named_target="gripper_close"
+              named_targets="{@named_targets}"/>
+          </Sequence>
+          <ForceSuccess name="arm_not_seen_or_inconsistent_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+
+        <!-- step 3: 无论前两步如何,每轮回 home -->
+        <MoveArmToNamed name="return_home" named_target="home"
+          named_targets="{@named_targets}"/>
+      </Sequence>
+    </Repeat>
+  </BehaviorTree>
+</root>
