@@ -100,6 +100,9 @@ vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），*
 | `ros-humble-ros2-control`、`ros-humble-ros2-controllers` | — | `agx_topic_hardware` 硬件插件 |
 | `ros-humble-behaviortree-cpp` | **4.9.1** | `lgw_bt_planner`、`go2_transit`（用 v4，不是 v3） |
 | `nlohmann-json3-dev` | 3.x | `lgw_bt_planner` |
+| `can-utils` | — | `can_activate.sh` 检查并配置 can0（`can_activate.sh` 会拒绝在缺 `can-utils` 时运行） |
+| `python3-numpy`、`python3-scipy` | — | `lgw_3d_tracker` |
+| `ros-humble-rosbag2`（含 `ros2 bag`） | — | `tools/lgw/record/record_cameras.sh` 等录制脚本 |
 
 安装：
 
@@ -107,19 +110,29 @@ vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），*
 sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
                  ros-humble-message-filters ros-humble-moveit ros-humble-navigation2 \
                  ros-humble-ros2-control ros-humble-ros2-controllers \
-                 ros-humble-behaviortree-cpp nlohmann-json3-dev \
+                 ros-humble-behaviortree-cpp ros-humble-rosbag2 nlohmann-json3-dev \
+                 can-utils python3-numpy python3-scipy \
                  libpcl-dev libeigen3-dev libboost-all-dev
 ```
 
 ### 3.1 Python 依赖（pip）
 
-| 依赖 | 用途 |
-|---|---|
-| `pyAgxArm` | `agx_arm_ctrl` 的 CAN SDK（vendor 的 `agx_arm_ros` 运行时依赖） |
+| 依赖 | 来源 / 版本 | 用途 |
+|---|---|---|
+| `pyAgxArm` | [agilexrobotics/pyAgxArm](https://github.com/agilexrobotics/pyAgxArm)，本机 `1.0.0` | `agx_arm_ctrl` 的 CAN SDK（vendor 的 `agx_arm_ros` 运行时依赖） |
 
 ```bash
-pip install -e /path/to/pyAgxArm     # 或 pip install pyAgxArm
+# 方式一：源码安装（可指定 commit/tag）
+git clone https://github.com/agilexrobotics/pyAgxArm.git
+pip install -e pyAgxArm
+
+# 方式二：直接从仓库安装
+pip install "git+https://github.com/agilexrobotics/pyAgxArm.git"
 ```
+
+> 版本用 `python3 -c "import pyAgxArm; print(pyAgxArm.__version__)"` 核对，
+> 与 vendor 的 `agx_arm_ros` 保持同一代（本机验证组合为 `pyAgxArm 1.0.0` +
+> vendor `agx_arm_ros@b9ad14d`）。
 
 ### 3.2 配套外部仓库（不在本仓库、也不在 vendor）
 
@@ -130,6 +143,18 @@ pip install -e /path/to/pyAgxArm     # 或 pip install pyAgxArm
 
 > 感知链路是 **AGPL-3.0**，按许可边界独立成仓库，不并入本仓库（同 Point-LIO 的处理）。
 > 缺失时本仓库仍可构建，只是依赖感知的 BT 子树会失败。
+
+### 3.3 宿主工作区 / 容器镜像提供的依赖
+
+| 依赖 | 谁用 | 说明 |
+|---|---|---|
+| `unitree_sdk2`（C++，2.0.0） | `lgw_vui_bridge` 的 `go2_vui_set_brightness_helper` | **不随本仓库 / vendor 分发**。构建前宿主机上需有一份**已编译**的 SDK 源码树（产出 `lib/<arch>/libunitree_sdk2.a` 与 `thirdparty/lib/<arch>/libddsc*.so`）；用 `UNITREE_SDK2_DIR` 或 `-DUNITREE_SDK2_SOURCE_DIR=` 指过去，默认回退 `/my_ws/foxy/unitree_sdk2` |
+| `domain_bridge`（`ros-humble-domain-bridge`） | `tools/lgw/start/start_lgw_perception_bridge.sh`（感知 `--lo` 模式） | 由容器镜像提供（其他成员维护镜像构建），本仓库不在 apt 清单里重复 |
+| `realsense2_camera`、`yoloe_perception`、`yoloe_humble_orchestration` | 感知链路脚本 | 由 vendor / 独立感知仓库提供，见 §2 与 §3.2 |
+
+> `unitree_sdk2` 只被 VUI helper 链接（静态 `libunitree_sdk2.a` + SDK 自带的
+> `libddsc/libddscxx`）。它与 rclcpp 的 `rmw_cyclonedds_cpp` 在同一进程里会发生
+> ddscxx 冲突，所以 helper 以独立子进程运行——这是设计约束，不是可选依赖。
 
 ## 4. 手工安装到 `/usr/local` 的 SDK
 
@@ -223,7 +248,9 @@ sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
                  ros-humble-message-filters ros-humble-grid-map-* \
                  ros-humble-moveit ros-humble-navigation2 ros-humble-ros2-control \
                  ros-humble-ros2-controllers ros-humble-behaviortree-cpp \
-                 nlohmann-json3-dev libpcl-dev libeigen3-dev libboost-all-dev
+                 ros-humble-rosbag2 nlohmann-json3-dev \
+                 can-utils python3-numpy python3-scipy \
+                 libpcl-dev libeigen3-dev libboost-all-dev
 
 python3 tools/preflight_deps.py                          # 检查环境是否就绪
 colcon build --symlink-install --parallel-workers 4

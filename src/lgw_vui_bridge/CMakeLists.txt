@@ -33,15 +33,25 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 # statically carries its own libddscxx 0.10.5) and the SDK's vendored libddscxx
 # 0.10.2 can NEVER share an address space here, because they live in separate
 # OS processes. See srv/SetVuiBrightness.srv header for the full rationale.
+# unitree_sdk2 不随本仓库/vendor 分发：构建前需要宿主机 foxy 工作区里编译好的源码树
+# （产出 lib/<arch>/libunitree_sdk2.a 与 thirdparty/lib/<arch>/libddsc*.so）。
+# 位置优先取环境变量 UNITREE_SDK2_DIR，否则回退到本机约定路径。
+# 详见 docs/dependencies.md §3.3。
+if(DEFINED ENV{UNITREE_SDK2_DIR})
+  set(_unitree_sdk2_default "$ENV{UNITREE_SDK2_DIR}")
+else()
+  set(_unitree_sdk2_default "/my_ws/foxy/unitree_sdk2")
+endif()
 set(UNITREE_SDK2_SOURCE_DIR
-  "/my_ws/foxy/unitree_sdk2"
+  "${_unitree_sdk2_default}"
   CACHE PATH
-    "Path to unitree_sdk2 source tree (bind-mounted from host /home/unitree/my_ws/foxy/unitree_sdk2)."
+    "Path to a built unitree_sdk2 source tree. Override with -DUNITREE_SDK2_SOURCE_DIR=<path> or env UNITREE_SDK2_DIR."
 )
 if(NOT EXISTS "${UNITREE_SDK2_SOURCE_DIR}/CMakeLists.txt")
   message(FATAL_ERROR
     "unitree_sdk2 source not found at ${UNITREE_SDK2_SOURCE_DIR}. "
-    "Override with -DUNITREE_SDK2_SOURCE_DIR=<path> to relocate.")
+    "Build upstream unitree_sdk2 first, then set UNITREE_SDK2_DIR=<path> "
+    "or pass -DUNITREE_SDK2_SOURCE_DIR=<path>. See docs/dependencies.md §3.3.")
 endif()
 find_library(UNITREE_SDK2_LIB
   NAMES unitree_sdk2
