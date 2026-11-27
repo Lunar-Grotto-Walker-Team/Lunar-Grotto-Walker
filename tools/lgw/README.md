@@ -5,12 +5,21 @@
 
 ```
 tools/lgw/
-├── _common.sh        # 公共路径：WS_FORK_HOST / WS_FORK_CT / CONTAINER
-├── start/            # 启动/停止链路、触发行为树
-├── bench/            # bench_cleanup.sh（按 PID 清理，不用 pkill -f ros）
+├── _common.sh        # 公共路径：WS_FORK_HOST / WS_FORK_CT / CONTAINER / vendor
+├── start/            # 启动/停止链路、触发行为树（日常使用）
+├── runtime/          # 运行时辅助：odom_tf_bridge.py
+├── bench/            # bench_cleanup、hold-recovery 验证、跟随时延测量、假目标发布
+├── record/           # 数据录制：相机 bag、TCP 位姿、Servo 轨迹
+├── diag/             # 诊断：servo 状态监视、零指令/恢复播种检查、跟踪轨迹分析
+├── agx/              # 机械臂侧一次性工具：CPV 能力探测、夹爪标定/直连测试
 ├── config/           # DDS(lo) 与 perception_bridge 配置、示例命令、TCP 航点
-└── test/             # 感知链路端到端脚本（需要 YOLOE 部署）
+└── test/             # 感知与跟踪的端到端脚本（需要 YOLOE 部署）
 ```
+
+> 只收录**运行、验证与排查需要**的脚本。早期的一次性调试脚本（`_diag_*.py`、
+> `lookat_*_sweep.py`、`jacobian_*`、`fk_*`、各类 `record_*` 变体、`.run/` 探针等）
+> 没有迁入——它们是 AI 调试过程的中间产物，设计结论已经沉淀在
+> [`docs/bt/`](../../docs/bt/README.md) 与 `docs/bt/history/`。
 
 ## 路径约定
 
@@ -22,7 +31,9 @@ tools/lgw/
 | `WS_FORK_CT` | `WS_FORK_HOST` 按挂载根改写；否则 `/my_ws/l4t/Lunar-Grotto-Walker` | 容器内仓库路径 |
 | `HOST_MOUNT` / `CT_MOUNT` | `/home/unitree/my_ws` / `/my_ws` | 宿主机 ↔ 容器挂载根 |
 | `CONTAINER` | `self_l4t` | 容器名 |
-| `L4T_ENV_CT` | `/my_ws/l4t/.l4t_env.sh` | 容器内的环境缓存 |
+| `VENDOR_ROOT_CT` | `${CT_MOUNT}/l4t/Lunar-Grotto-Walker-Vendor` | vendor 工作区在容器内的路径 |
+| `AGX_CAN_ACTIVATE_CT` | `${VENDOR_ROOT_CT}/src/agx_arm_ros/scripts/can_activate.sh` | CAN 激活脚本（随 vendor 源码提供，不安装到 install/） |
+| `L4T_ENV_CT` | `/my_ws/l4t/.l4t_env.sh` | 容器内的环境缓存（属于容器环境，不在本仓库） |
 
 仓库不在默认位置时：
 

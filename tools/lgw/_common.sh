@@ -29,6 +29,20 @@ else
 fi
 
 CONTAINER="${CONTAINER:-self_l4t}"
+
+# vendor 仓库（第三方驱动与基础库），默认与本仓库同级
+VENDOR_ROOT_HOST="${VENDOR_ROOT_HOST:-$(cd "$LGW_ROOT_HOST/.." && pwd)/Lunar-Grotto-Walker-Vendor}"
+if [ -n "${VENDOR_ROOT_CT:-}" ]; then
+  :
+elif [[ "$VENDOR_ROOT_HOST" == "$HOST_MOUNT"* ]]; then
+  VENDOR_ROOT_CT="${VENDOR_ROOT_HOST/#$HOST_MOUNT/$CT_MOUNT}"
+else
+  VENDOR_ROOT_CT="${CT_MOUNT}/l4t/Lunar-Grotto-Walker-Vendor"
+fi
+# can_activate.sh 随 vendor 的 agx_arm_ros 源码提供（不安装到 install/）
+AGX_CAN_ACTIVATE_CT="${AGX_CAN_ACTIVATE_CT:-${VENDOR_ROOT_CT}/src/agx_arm_ros/scripts/can_activate.sh}"
+
 L4T_ENV_CT="${L4T_ENV_CT:-${CT_MOUNT}/l4t/.l4t_env.sh}"
 
-export LGW_ROOT_HOST WS_FORK_HOST WS_FORK_CT CONTAINER HOST_MOUNT CT_MOUNT L4T_ENV_CT
+export LGW_ROOT_HOST WS_FORK_HOST WS_FORK_CT CONTAINER HOST_MOUNT CT_MOUNT \
+       VENDOR_ROOT_HOST VENDOR_ROOT_CT AGX_CAN_ACTIVATE_CT L4T_ENV_CT

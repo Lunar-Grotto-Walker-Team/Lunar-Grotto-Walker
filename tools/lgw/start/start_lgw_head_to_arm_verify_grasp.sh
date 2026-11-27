@@ -338,7 +338,7 @@ docker exec "${CONTAINER}" chmod 777 "${WS_FORK_CT}/.run" 2>/dev/null || true
 # Step 1: CAN 总线 up
 echo "[bringup] Step 1: 激活 CAN 总线 can0 @ 1 Mbps..."
 if ! docker exec "${CONTAINER}" bash \
-    /my_ws/l4t/agx_arm_ws/src/agx_arm_ros/scripts/can_activate.sh can0 1000000 2>&1 | tail -3; then
+    ${AGX_CAN_ACTIVATE_CT} can0 1000000 2>&1 | tail -3; then
   echo "[bringup]   ERROR: can_activate.sh 失败 (机械臂未上电 / 容器无 NOPASSWD sudo)"
   exit 1
 fi

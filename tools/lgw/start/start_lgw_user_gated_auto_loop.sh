@@ -197,11 +197,11 @@ echo "  OK"
 
 # ---- 激活 CAN 总线 ----
 echo "[2/6] 激活 CAN 总线 can0 @ 1 Mbps..."
-if ! docker exec "${CONTAINER}" bash /my_ws/l4t/agx_arm_ws/src/agx_arm_ros/scripts/can_activate.sh can0 1000000 2>&1 | tail -3; then
+if ! docker exec "${CONTAINER}" bash ${AGX_CAN_ACTIVATE_CT} can0 1000000 2>&1 | tail -3; then
   echo "  ERROR: can_activate.sh 失败。检查:"
   echo "    - 机械臂 + CAN 模块已上电"
   echo "    - 容器内 unitree 有 passwordless sudo (NOPASSWD)"
-  echo "    - can_activate.sh 路径: /my_ws/l4t/agx_arm_ws/src/agx_arm_ros/scripts/can_activate.sh"
+  echo "    - can_activate.sh 路径: ${AGX_CAN_ACTIVATE_CT}"
   exit 1
 fi
 echo "  OK"
