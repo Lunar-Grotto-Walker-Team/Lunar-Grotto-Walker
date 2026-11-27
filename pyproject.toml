@@ -8,10 +8,12 @@
 # （.git、node_modules 等），导致 ruff 去扫 .git 目录。
 # 追加排除：
 #   thirdparty  —— vendor 的第三方源码（nanoflann 等）
-#   Log         —— point_lio 上游自带的 IMU 调试绘图脚本，依赖同目录 plot.py
-#                  的全局变量，单独静态分析必然报 F821；不参与构建
 #   build/install/log —— colcon 产物
-extend-exclude = ["thirdparty", "Log", "build", "install", "log"]
+#
+# 2026-11-27: 原先还排除 `Log`（point_lio 上游自带的 IMU 调试绘图脚本，
+# 依赖同目录 plot.py 的全局变量，静态分析必报 F821）。point_lio 已移入
+# Lunar-Grotto-Walker-PointLIO，该目录不在本仓库了，排除项随之删除。
+extend-exclude = ["thirdparty", "build", "install", "log"]
 
 [tool.ruff.lint]
 select = ["E9", "F63", "F7", "F82"]

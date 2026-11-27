@@ -1,7 +1,8 @@
 # 暖机启动门控验证记录
 
 **被测功能**：`point_lio` 的 `wait_for_start` 参数 + `/start_mapping` 服务
-（实现见 `src/point_lio_ros2/src/laserMapping.cpp`）。
+（实现见 `Lunar-Grotto-Walker-PointLIO` 仓库的 `src/laserMapping.cpp`，
+`deps.repos` 拉到本仓库的 `src/point_lio_ros2/`）。
 
 **目的**：让 A/B/C 全栈先起来暖机（下游就绪、TF 就绪、参数就绪），但不建图；
 等机器人摆到期望的起点后发一个信号，LIO 才开始吃数据，**使世界原点等于发信号那一刻的机体位姿**。

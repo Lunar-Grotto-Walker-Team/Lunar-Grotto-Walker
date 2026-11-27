@@ -42,8 +42,12 @@ docker exec -w /my_ws/l4t/nav_ws/elevmap_fastlio self_l4t bash -c \
 ```
 
 launch 参数：`show_rviz`、`rviz_config`（band 用默认配置，cave 用
-`go2_elevmap_fastlio_cave.rviz`）、`with_bridge`、`use_fast_postprocessor`、
+`go2_elevmap_fastlio_cave.rviz`）、`with_bridge`、`with_utlidar_fill`、
 `projector_params_file`。
+
+> 2026-11-26 起没有 `use_fast_postprocessor` 开关：旧的 `grid_map_filters_demo`
+> 滤波链（依赖 apt 里没有的 `grid_map_demos`）已删除，
+> `elevation_fast_postprocessor` 是无条件启动的唯一后处理。
 
 ## 栅格化：numpy 与 native
 

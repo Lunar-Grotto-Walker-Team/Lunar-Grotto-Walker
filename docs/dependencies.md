@@ -1,31 +1,65 @@
 # 依赖说明
 
-本仓库只放团队自写的内容与**改过的上游包**；官方库统一收编在
-[`Lunar-Grotto-Walker-Vendor`](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor)，
-通过根目录 [`deps.repos`](../deps.repos) 固定版本拉取。
+> **本版本验证环境**：vendor `develop` @ `b4cf047`（2026-11-27）
+> —— 只在发布 / 合并到 `main` 时更新这一行，不随 vendor 每次提交变。
 
-> **为什么不直接从上游克隆再打补丁**：vendor 仓库里我们对上游的改动是 **commit**，
-> 不是补丁文件。从上游克隆拿到的是未适配的代码，只能照着各目录的 `UPSTREAM.md`
-> 手工改——既容易漏（比如 `AllowMulticast=spdp` 漏了会让大话题吞吐掉到 12 MB/s），
-> 也无法保证团队每个人拿到的是同一套组合。上游跟踪是 vendor 仓库的职责，
-> 主仓库只需要固定它的版本。
+本仓库只放团队自写的内容与**改过的上游包**；官方库统一收编在
+[`Lunar-Grotto-Walker-Vendor`](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor)。
+
+**vendor 不是本仓库的依赖项，而是配套的独立环境**：单独 clone、单独构建，
+用它的 `install/setup.bash` 叠加到环境里之后再编译本仓库。根目录
+[`deps.repos`](../deps.repos) 只负责 GPL-2.0 的 Point-LIO（见 1.2）。
+
+> **为什么用 vendor 而不是直接从上游克隆再打补丁**：vendor 仓库里我们对上游的
+> 改动是 **commit**，不是补丁文件。从上游克隆拿到的是未适配的代码，只能照着各目录
+> 的 `UPSTREAM.md` 手工改——既容易漏（比如 `AllowMulticast=spdp` 漏了会让大话题
+> 吞吐掉到 12 MB/s），也无法保证团队每个人拿到的是同一套组合。上游跟踪是 vendor
+> 仓库的职责，主仓库只记录验证时用的 vendor 版本（本页顶部那一行）。
+>
+> **为什么 vendor 不写进 `deps.repos`**：写进去等于每次部署都把 vendor 克隆到
+> `src/vendor/` 编第二遍，两个工作区里同名包各有一份，source 顺序一反就跑旧版本；
+> 而且 vendor 每次发版都要改主仓库的 pin，主仓库会被无关变更牵着走。
+> 依赖清单只留真正属于本仓库的包，环境靠 source 叠加。
 
 ---
 
-## 1. 本仓库内的包（源自上游，已修改）
+## 1. 上游包（已修改）
+
+### 1.1 在本仓库内（BSD-3-Clause）
 
 | 包 | 上游 | License | 改动说明 |
 |---|---|---|---|
-| `src/point_lio_ros2`（包名 `point_lio`） | [dfloreaa/Point-LIO-ROS2](https://github.com/dfloreaa/Point-LIO-ROS2) → [hku-mars/Point-LIO](https://github.com/hku-mars/Point-LIO) | **GPL-2.0** | [UPSTREAM.md](../src/point_lio_ros2/UPSTREAM.md) |
 | `src/simple_loop_closure_ros2`（包名 `simple_loop_closure`） | [ashBabu/simple_loop_closure](https://github.com/ashBabu/simple_loop_closure) → [vectr-ucla/SimpleLoopClosure](https://github.com/vectr-ucla/SimpleLoopClosure) | BSD-3-Clause | [UPSTREAM.md](../src/simple_loop_closure_ros2/UPSTREAM.md) |
 
-> ⚠️ `point_lio` 是 **GPL-2.0**。公开分发无碍（保留 LICENSE 即可），但项目若需闭源或
-> 商业化，这部分会受限，请提前评估。
+### 1.2 在独立仓库（GPL-2.0）
 
-## 2. 第三方包（来自 vendor 仓库）
+| 包 | 仓库 | 上游 | License |
+|---|---|---|---|
+| `src/point_lio_ros2`（包名 `point_lio`） | [Lunar-Grotto-Walker-PointLIO](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO) | [dfloreaa/point_lio_ros2](https://github.com/dfloreaa/point_lio_ros2) → [hku-mars/Point-LIO](https://github.com/hku-mars/Point-LIO) | **GPL-2.0** |
+
+> **为什么单独一个仓库**：`point_lio` 是 GPL-2.0，本仓库其余代码是 BSD-3-Clause 与
+> 团队自写代码。同一仓库分发 GPL 与宽松许可代码，容易在法律上被当成一个整体作品，
+> 从而让 BSD-3 部分被 GPL 覆盖（《第三方仓库修改与入库通用指南》§6/§10）。
+> 拆开后 GPL 义务只由那个仓库承担；将来若需闭源交付，只需替换这一个依赖。
+>
+> 本仓库不复制它的代码，只通过 `deps.repos` 钉一个 commit 拉取，
+> 落地路径仍是 `src/point_lio_ros2`，各 launch 里的包名 `point_lio` 不变。
+> 改动清单见该仓库的 `UPSTREAM.md`。
+
+## 2. 第三方包（来自配套的 vendor 工作区）
 
 vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），**未改动的**由 vendor 的
-`deps.repos` 拉取。主仓库只认 vendor 的版本，不关心它的内部分级。
+`deps.repos` 拉取。主仓库不关心它的内部分级，只用它 `install/` 里编译好的包。
+
+**本仓库在构建时实际用到的 vendor 包只有两个**：
+
+| vendor 包 | 谁需要 | 提供什么 |
+|---|---|---|
+| `unitree_ros2` → `unitree_go` | `simple_loop_closure`、`utlidar_terrain_fill` | 宇树消息定义 |
+| `livox_ros_driver2` | `point_lio` | Mid-360S 的 `CustomMsg` |
+
+其余 vendor 包（`elevation_mapping`、`kindr_ros`、`BehaviorTree.ROS2`）服务于
+`nav_ws` 下的实机链路，主仓库编译时不需要，但同一个 vendor 工作区一并提供。
 
 ### 2.1 vendor 入库的包（已修改）
 
@@ -114,11 +148,19 @@ sudo make install && sudo ldconfig
 touch ../../kindr/COLCON_IGNORE   # 不让 colcon 重复编译
 ```
 
-## 5. 部署（两阶段）
+## 5. 部署（两个独立仓库，先环境后应用）
 
-主仓库依赖 vendor 仓库，**先部署 vendor，再部署主仓库**。
+**主仓库必须配一份 vendor**，且 vendor 要先构建好：
 
-### 第一阶段：vendor 仓库
+```
+Lunar-Grotto-Walker-Vendor/   ← 环境（第三方驱动与基础库）
+        install/setup.bash
+                ↓  source
+Lunar-Grotto-Walker/          ← 应用（团队代码 + Point-LIO）
+        install/setup.bash
+```
+
+### 第一阶段：vendor 仓库（环境）
 
 ```bash
 git clone https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor.git
@@ -134,27 +176,34 @@ cp -rf launch_ROS2/ launch/
 cd ../..
 
 colcon build --symlink-install --parallel-workers 4
-source install/setup.bash
+source install/setup.bash        # 之后所有编译本仓库的终端都要先 source 这一句
 ```
 
-### 第二阶段：主仓库
+### 第二阶段：主仓库（应用）
 
 ```bash
 git clone https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker.git
 cd Lunar-Grotto-Walker
+
+source ../Lunar-Grotto-Walker-Vendor/install/setup.bash   # ← 缺这句编译会失败
+vcs import src < deps.repos                              # 只拉 point_lio_ros2
+
 sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
                  ros-humble-message-filters ros-humble-grid-map-* \
                  libpcl-dev libeigen3-dev libboost-all-dev
+
+python3 tools/preflight_deps.py                          # 检查环境是否就绪
 colcon build --symlink-install --parallel-workers 4
 source install/setup.bash
 ```
 
-**环境变量**：两边的 `install/setup.bash` 都要 source，顺序 vendor → 主仓库。
-CycloneDDS 配置（`eth10` + `AllowMulticast=spdp`）由 vendor 的
-`src/unitree_ros2/setup.sh` 提供。
+**运行时的环境**：vendor → 主仓库，顺序不能反。CycloneDDS 配置
+（`eth10` + `AllowMulticast=spdp`）由 vendor 的 `src/unitree_ros2/setup.sh` 提供。
 
-> 也可以把 vendor 一次性拉进主仓库（`vcs import src < deps.repos` → `src/vendor/`），
-> 但这样两个工作区会重复编译，只建议在没有独立 vendor 副本时使用。
+> **不要把 vendor 拉进本仓库的 `src/`**。那样 vendor 会被编第二遍，两个工作区
+> 里同名包各有一份，source 顺序一反就跑到旧版本；而且 `deps.repos` 里也没写它。
+> 本仓库单独 clone 下来是**不完整**的，必须先有 vendor——`preflight_deps.py`
+> 会先报这一条。
 
 > **不要用 livox 官方的 `./build.sh humble`**：它会删掉整个工作区的 `build/ install/`、
 > 不带 `--packages-select` 编所有包、并在收尾删掉 `launch/`。
@@ -176,10 +225,14 @@ vendor 仓库 `unitree_ros2/setup.sh` 提供，**不要改回上游默认值**�
 ## 7. 更新依赖
 
 ```bash
-# vendor 仓库跟上游更新（在其自己的 clone 里做，走 PR 到 develop）
+# ① vendor 跟上游更新（在 vendor 自己的 clone 里做，走 PR 到它的 develop）
 cd Lunar-Grotto-Walker-Vendor
 git subtree pull --prefix=src/<pkg> up-<name> <branch> --squash
 
-# 主仓库升级 vendor 版本：改 deps.repos 里的 version，然后
+# ② 主仓库里的 Point-LIO 升级
 vcs pull src
+
+# ③ vendor 升级后主仓库这边只需要一件事：
+#    重新验证一遍，然后更新本页顶部「本版本验证环境」那一行。
+#    deps.repos 不用动 —— vendor 不在里面。
 ```

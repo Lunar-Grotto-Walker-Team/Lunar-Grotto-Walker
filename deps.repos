@@ -4,17 +4,27 @@
 #   vcs import src < deps.repos     # 首次拉取
 #   vcs pull src                    # 后续更新
 #
-# 为什么指向 vendor 仓库而不是各上游：
-#   vendor 仓库里带着我们对上游的适配改动（现场 IP、CycloneDDS 配置、
-#   BehaviorTree deadline 修复等）。从上游克隆得到的是**未适配**的代码，
-#   照着 UPSTREAM.md 手工打补丁既容易漏、也无法保证版本组合一致。
-#   上游跟踪由 vendor 仓库自己用 `git subtree pull` 完成，主仓库不关心。
+# ⚠️ 这里只有 GPL-2.0 的 Point-LIO 前端。**vendor 仓库不在这里**。
+#
+# 为什么 vendor 不写进来：
+#   vendor（第三方驱动与基础库）是**独立部署的环境**，不是本仓库的依赖项。
+#   部署时单独 clone / 构建一份，用它的 install/setup.bash 叠加环境后再编译
+#   本仓库，就像 apt 装的 ROS 包一样。这样 vendor 每次发版都不需要动本文件，
+#   也不会把 vendor 重复克隆进 src/ 里编两遍、source 顺序一反就跑到旧版本。
+#
+#   本仓库唯一需要 vendor 提供的是 `unitree_go`（unitree_ros2）与
+#   `livox_ros_driver2`，两者都必须先在 AMENT_PREFIX_PATH 里。
+#   构建前跑 `python3 tools/preflight_deps.py` 会检查这一点。
+#
+#   配套的 vendor 版本记在 docs/dependencies.md 顶部，只在发布点更新。
 #
 # 版本以完整 commit SHA 固定，保证任何人拉到的都是验证过的那一套。
-# vendor 仓库打 tag 后可换成 `version: v0.1.0-alpha`。
 
 repositories:
-  vendor:
+  # GPL-2.0 的 Point-LIO 前端单独成仓库（许可证隔离）。键名就是落地目录名，
+  # 所以这里写 point_lio_ros2，包仍落在 src/point_lio_ros2/，包名 point_lio
+  # 不变，各 launch 无需改动。详见 docs/dependencies.md 1.2。
+  point_lio_ros2:
     type: git
-    url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor.git
-    version: 4b7448742f12ef92b061a9fa67eccc470384ec92
+    url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO.git
+    version: d01a319d8e0f6f9efa5eb43f80e6e79834f9a42b
