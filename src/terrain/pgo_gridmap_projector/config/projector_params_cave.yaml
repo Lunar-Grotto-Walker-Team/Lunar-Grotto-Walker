@@ -10,6 +10,13 @@
 
 pgo_gridmap_projector:
   ros__parameters:
+    # 2026-11-19 / 2026-11-27 restored: uLidar fill 的最长可接受年龄。
+    # 超过就整条丢弃, 而近场那些只有 fill 看得到的格子会立刻回到 UNKNOWN
+    # (站立 bag 实测: fill 年龄从 0.9 s 涨到 3.4 s 时, 0–0.8 m 的有效格
+    # 从 113 掉到 14/199)。fill 自己的滚动窗口是 5 s, 所以 5 s 是上限。
+    # 代码默认也是 5.0, 这里显式写出以免默认值变化时静默改变行为。
+    fill_max_age_s: 5.0
+
     # ---- Topics ----
     # /aft_pgo_map is the PGO-corrected full map, rebuilt every second by
     # simple_loop_closure from all keyframes at the current optimized poses.
@@ -79,6 +86,29 @@ pgo_gridmap_projector:
     extent_quantum: 1.0
     extent_min_length: 10.0
     extent_max_length: 120.0
+    # ---- Fixed robot-centred window (2026-11-14, restored 2026-11-27) ----
+    # 11-14 的定因: 长走廊的累积图会长到 100x100 m；下游 projector /
+    # postprocessor / bridge 都是 O(格数)，100 万格时 2 Hz 的链条会掉到
+    # 0.3-1 Hz。全局 costmap 本来只消费 60x60 m 的 rolling 视口，所以机器人
+    # 周围 70x70 m 足够覆盖它，而格数固定（70 m @ 0.1 = 49 万格）。
+    # window_quantum 把窗口中心吸附到整数米，避免格子随位姿每帧亚格抖动。
+    # 想回到自适应全图时把 window_centered_on_pose 设为 false（auto_extent
+    # 仍然生效，直到 120 m 的 runaway guard）。
+    #
+    # 2026-11-27: 该块在 11-20 工作区事故恢复时丢失，cave profile 退回 11-04
+    # 的自适应 30 m（cap 120 m）。同目录 projector_params.yaml 与
+    # projector_params_band.yaml 一直保留着 window 70，只有 cave 丢了。
+    #
+    # 2026-11-27 实测（cave_20261120_092710，100 s，308 关键帧）：window 70
+    # 时栅格 700x700=49 万格，projector 单帧 1.6 s，端到端
+    # /elevation_map_raw_post 只有 0.21-0.26 Hz；同 bag 在自适应 ~30 m
+    # （9 万格）下是 0.87 Hz。瓶颈是 O(格数) 的栅格化，与点数无关
+    # （33 万点 1.6 s，而 11-20 的 160 万点只要 1.1 s）。
+    # 洞穴单程在 30 m 量级，70 m 窗口纯属浪费，故 cave profile 单独取 30 m；
+    # 长走廊/带状场景（projector_params.yaml、_band.yaml）仍需 70 m。
+    window_centered_on_pose: true
+    window_length: 30.0
+    window_quantum: 1.0
     extent_shrink: false
     # 取 bbox 前每轴丢弃的极端样本数: 一个配准离群点就足以把网格拖到
     # 公里外, 而真正的墙面由成千上万个点构成, 丢 1 个不影响。
@@ -180,10 +210,11 @@ pgo_gridmap_projector:
     slope_except_above: 0.45
     upright_spread_max: 0.25
 
-    # Output band relative to the per-cell reference.  0.45 (not 0.25): the
-    # old band's effective ceiling was ~0.89 m above the ground, and 6 m
-    # outside the robot only the terrain layer can express obstacles.
-    out_band_above: 0.45
+    # Output band relative to the per-cell reference.
+    # 2026-11-14 (restored 2026-11-27): 0.45 -> 1.00。狗带收起的机械臂约
+    # 0.8 m 高，0.5 m 的带宽会把 0.5~1.0 m 之间的光束全部丢掉；1.5 m 的
+    # 洞顶仍比 1.0 m 高出 0.5 m。11-20 恢复事故把它退回了 0.45。
+    out_band_above: 1.00
     out_band_below: 0.40
 
     # Coverage guard: skip the whole frame (keep the last map) when the
