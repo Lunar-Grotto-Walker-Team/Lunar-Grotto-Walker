@@ -22,9 +22,10 @@ repositories:
     url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor.git
     version: 78612d675af13927558cc172c09f0d2afb09ce2c
 
-  # GPL-2.0 的 Point-LIO 前端单独成仓库（许可证隔离），落地路径仍是
-  # src/point_lio_ros2，包名 point_lio 不变。详见 docs/dependencies.md 1.2。
-  pointlio:
+  # GPL-2.0 的 Point-LIO 前端单独成仓库（许可证隔离）。键名就是落地目录名，
+  # 所以这里写 point_lio_ros2，包仍落在 src/point_lio_ros2/，包名 point_lio
+  # 不变，各 launch 无需改动。详见 docs/dependencies.md 1.2。
+  point_lio_ros2:
     type: git
     url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO.git
     version: d01a319d8e0f6f9efa5eb43f80e6e79834f9a42b
