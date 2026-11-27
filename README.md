@@ -14,16 +14,23 @@
 
 ## 依赖与构建
 
-第三方驱动与基础库统一收编在
-[Lunar-Grotto-Walker-Vendor](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor)；
-GPL-2.0 的 Point-LIO 前端单独放在
+> ⚠️ **本仓库必须与 vendor 仓库配套使用，单独 clone 下来是编译不过的。**
+> 第三方驱动与基础库在
+> [Lunar-Grotto-Walker-Vendor](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor)
+> 里**单独部署**，不是本仓库的依赖项：先 clone 并构建它，`source` 它的
+> `install/setup.bash`，再编译本仓库。vendor 升级不需要改本仓库任何文件。
+
+GPL-2.0 的 Point-LIO 前端在
 [Lunar-Grotto-Walker-PointLIO](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO)，
-以避免与仓库内的 BSD-3 代码混在一起。两者的版本都由根目录
-[`deps.repos`](deps.repos) 固定。
+以避免与仓库内的 BSD-3 代码混在一起；它由根目录 [`deps.repos`](deps.repos)
+钉 commit 拉取，是 `deps.repos` 里唯一的条目。
 
 ```bash
-vcs import src < deps.repos     # 拉取第三方包
-colcon build --symlink-install  # 构建
+# 前提：vendor 已 clone 并构建好
+source ../Lunar-Grotto-Walker-Vendor/install/setup.bash
+vcs import src < deps.repos        # 拉取 Point-LIO
+python3 tools/preflight_deps.py    # 检查 vendor 环境是否就绪
+colcon build --symlink-install
 ```
 
 完整清单、系统依赖、`/usr/local` SDK 安装步骤见
