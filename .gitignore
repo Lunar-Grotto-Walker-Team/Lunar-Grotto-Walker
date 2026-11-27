@@ -18,3 +18,11 @@ Thumbs.db
 install/
 log/
 build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 行为树启动脚本的运行时日志 ----
+.run/

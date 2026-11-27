@@ -1,0 +1,233 @@
+# 2026-11-11 P0: cave-proxy 配置。
+#
+# !! 这是 1.5 m 宽 x 1.5 m 高洞穴的**起始值**, 不是对窄道斜坡/窄走廊/
+# !! 花园小路拟合出来的结果。在这些场地调参时, 只调整"环境尺度"相关的
+# !! 量 (搜索半径/距离门限/ICP 对应距离), 不要把门控阈值改成只对某一个
+# !! 场地成立的值; 目标是换到洞穴后仍能工作。
+#
+# 与默认 simple_loop_closure.yaml 的差异:
+#   - 更小的回环搜索半径/轨迹距离门限 (窄空间里 8 m 已足够)
+#   - 更严的 fitness (0.20) 与 overlap (0.35)
+#   - 更小的平移一致性门限 (0.2 m / 6%), 窄空间里的 false loop 位移更小
+#   - icp_max_corr_dist 5 m (默认 200 m 等于不限, 窄空间里应约束)
+#   - Go2 相对 z 关; IMU 重力软先验开 (取代旧姿态先验); floor 因子默认关
+#     (A/B 实测无额外姿态收益, 且放大 xy 形变)
+#
+# 判据见 nav_ws/docs/2026-11-09-3dof-go2-corridor-validation.md 的 P0 小节:
+# 真回环必须被接受, false loop (Loop Detected 里 |d_xy|/path 异常) 必须被
+# 挡掉; 若 overlap 门控误杀真回环, 先降到 0.30, 再降到 0.25。
+simple_loop_closure:
+  ros__parameters:
+    mapped_cloud: true
+    time_stamp_tolerance: 0.05
+    keyframe_dist_th: 0.15
+    keyframe_angular_dist_th: 0.05
+    loop_search_time_diff_th: 30.0
+    loop_search_dist_diff_th: 8.0  # cave-proxy: 窄空间里沿轨迹 8 m 就允许回环候选 (默认 15)。
+                                    # 时间门限 30 s 独立生效。风险:直洞自相似, ICP 可能沿轴向
+                                    # 滑移; 由 overlap/yaw/dz/平移一致性/去重门控兜底, 但仍要用
+                                    # bag 验 Loop Rejected 日志。
+    loop_search_angular_dist_th: 3.1415
+    loop_search_frame_interval: 3
+    search_radius: 3.0             # 2026-11-17: 1.5 m 宽洞穴取 3.0 m (原 8.0)。半径应覆盖
+                                    # 回访时的位姿误差(实测 0.2-0.5 m), 不是通道宽度; 8 m 会横跨
+                                    # 5 个通道宽度, 岔路口容易选到相邻支洞的关键帧, 自相似墙面
+                                    # 下 ICP 仍能给出低 fitness. 代码把该值平方后给 nanoflann
+                                    # (3 m 语义正确); ICP 对应距离由下面的 icp_max_corr_dist
+                                    # 单独控制, 不再复用这个平方值。
+    target_frame_num: 10
+    target_voxel_leaf_size: 0.15
+    source_voxel_leaf_size: 0.15
+    vis_map_voxel_leaf_size: 0.05 # 与 map_accumulator 的 resolution 必须同步。单帧体素 0.15 × 约 10 个视角叠加
+                              # 后本征间距约 0.15/√10≈0.047,再往下取不到新信息 —— 0.05 是地板不是台阶
+    fitness_score_th: 0.20
+    vis_map_cloud_frame_interval: 0 # 0 = 用全部关键帧拼可视地图;纯可视化节流,不影响 ICP/回环精度
+
+    # 2026-11-04 增量可视化地图缓存:
+    #   旧实现每秒把全部关键帧重新变换、拼接、再对整图做 0.05 m 体素滤波,
+    #   单周期成本 O(全部点云),地图变大后 /aft_pgo_map 从 1 Hz 掉到 0.6 Hz。
+    #   新实现每个关键帧只变换/体素化一次(0.05 m first-write-wins 去重),
+    #   1 Hz 周期只处理新增关键帧;回环时或每 vis_full_rebuild_interval_s
+    #   秒做一次全量重建,以吸收 iSAM2 对旧位姿的微小修正。
+    #   vis_incremental: false 可回退到旧的整图重建行为(用于 A/B)。
+    vis_incremental: true
+    vis_full_rebuild_interval_s: 60.0
+    # 2026-11-12: 5 Hz threads; fall back to 2 Hz if CPU-bound.
+    loop_rate_hz: 5.0
+    vis_rate_hz: 2.0
+
+    # 2026-11-07 位姿图噪声 (方差, 不是标准差):
+    #   旧值: 里程计 1e-6 (标准差 1 mm) + 回环 = ICP fitness (0.01 量级).
+    #   回环比里程计弱 4~6 个数量级, 图几乎被里程计链钉死 —— 实测长走廊里
+    #   PGO 输出与原始 LIO 的 z 曲线几乎重合, 回环没能修正高度漂移。
+    #   新值: 里程计按每关键帧 ~1 cm / ~0.6° 建模 (1e-4), 回环方差取 fitness
+    #   (PCL 的均方距离, 单位 m^2) 并设 1e-4 下限 (标准差 1 cm)。这样回环
+    #   与累计里程计不确定度同量级, 能真正把纵向/高度误差拉回来;
+    #   误匹配仍由 Cauchy 鲁棒核 + fitness_score_th 抑制。
+    odom_trans_var: 1.0e-4
+    odom_rot_var: 1.0e-4
+    # 2026-11-15: 里程计平移改在世界系约束（旋转仍机体系）。机体系平移会
+    # 把 gravity prior 的姿态修正积分成 xy 弯曲：corridor 150 s 实测默认
+    # 弯 5.9 m，关闭 gravity 0.19 m，本项即为此解耦。z 仍由里程计 z 链负责
+    # (本 profile 不开 leg z).
+    use_world_odom_trans: true
+    # 2026-11-13: 世界 z 连续性软因子 (m^2), 每个里程计边一条.
+    # 回环修正 yaw/姿态后, 机体系里程计边会把平移重新投影到世界 z; 该项
+    # 把每步世界 Δz 拉回 LIO 观测, 保证无可靠 z 观测时后端不把 z 改坏.
+    # 0 关闭. 1e-3 = sigma 3.2 cm, 只做形状保持.
+    # 与 enable_go2_attitude / enable_go2_z 互斥（同开会冲突, 代码自动跳过并 WARN）.
+    # 2026-11-13 P2: gravity 与 z 连续性互斥; 开 gravity 时显式设 0,
+    # 避免每次启动 WARN, 也让配置与生效值一致. 原 cave-proxy 的 1e-3
+    # 基线保留在 scripts/large/p1_runs/slc_p2_cave_base.yaml.
+    odom_z_diff_var: 0.0
+    loop_var_scale: 1.0
+    loop_var_min: 1.0e-4
+
+    # 2026-11-07 回环边质量控制。三个开关默认全部等于"旧行为",
+    # 因为 corridor bag 上实测(只跑上游 A, 同一段数据, 见
+    # go2-nav2-terrain-pointlio/scripts/large/runs/loopdiag*):
+    #
+    #   配置                  PGO z std  末帧 z   末帧 xy   地图 z05
+    #   原始 LIO(参照)          0.31     -0.01    0.22      --
+    #   基线(本文件默认)        0.48     +0.37    0.16     -0.48
+    #   仅开一致性门限          0.60     -1.42    0.41     -1.65
+    #   仅收紧 ICP              0.55     +0.35    0.14     -0.43
+    #   两项都开                0.53     -1.02    0.47     -1.46
+    #   各向异性(放松 z/姿态)   0.57     +0.74    2.45     -0.44
+    #
+    # 结论(2026-11-07, 历史记录): 三项改动都不如当时的基线。回环在这条
+    # 走廊里对 z 是负收益, 但对平面是正收益。
+    # 2026-11-09 更新: 默认已改为 3-DOF (loop_constrain_* = false) +
+    # 距离比例门限; 上面这张表是旧配置的 A/B 记录, 不要再据此理解当前默认。
+    #
+    # icp_max_corr_dist: ICP 对应点最大距离(米)。cave-proxy 用 5 m:
+    #   窄空间里初值误差通常 < 5 m, 5 m 足以收敛, 又比默认 200 m (等于
+    #   不限) 更能阻止 ICP 沿墙滑到远处。若 proxy 场地出现长基线回环
+    #   收敛不到, 再放宽到 10 m, 不要直接回 200。
+    icp_max_corr_dist: 5.0
+    # loop_max_trans_delta: 回环边与里程计预测的平移差**下限**(米)。
+    #   2026-11-09 实测：1e6（关闭）时，自相似走廊里 7-10 m 的 false loop
+    #   把 PGO xy 闭合误差推到 2.1 m；启用下面的距离比例门限后降到
+    #   0.13-0.19 m。0.5 单独使用会拒掉 59/95 条长基线真回环，所以要
+    #   和 ratio 一起用。
+    loop_max_trans_delta: 0.2
+    # 距离比例门限：gate = max(loop_max_trans_delta, ratio * 两关键帧间
+    # 路径长度)。0 = 关闭（只用固定门限）。走廊取 0.10：15 m 路径的
+    # false loop 门限 1.5 m（实测 7-10 m 被拒），100 m 真回环门限 10 m。
+    loop_max_trans_delta_ratio: 0.06
+    # 2026-11-17: 平移一致性门限的硬上限(米). 0 = 不设上限(旧行为).
+    #   gate = min(max(0.2, 0.06*path), cap). 走廊实测: 45-57 m 基线的
+    #   ratio 门限到 2.7-3.4 m, ICP 沿均匀走廊滑 2.5-3.2 m 的假边全被
+    #   接受, PGO 相对 LIO 被拖到 3 m. 真回环的修正量在 0.2-0.5 m 量级,
+    #   1.0 m 上限仍留 2 倍余量; 若洞穴长基线真回环被误杀, 先放到 1.5.
+    loop_max_trans_delta_cap: 1.0
+
+    # 2026-11-11 P0: 进图前的几何质量门控 (场景无关, 不拟合具体场地).
+    #   顺序: fitness -> overlap -> yaw -> 候选 Δz -> 平移一致性 -> 去重.
+    # overlap_min: ICP 后源点云落在目标子图 overlap_dist 内的比例下限.
+    #   真实回访同视角重叠高; 自相似墙面滑移往往只有一小段对上.
+    # loop_max_yaw_delta: ICP yaw 相对里程计预测的最大修正 (rad).
+    #   比较的是"修正量", 不是两帧朝向, 所以不同接近方向也能通过.
+    # loop_max_candidate_dz: 候选关键帧高度差上限 (米). 挡住跨层回环;
+    #   同层/坡面真实回访不受影响. 优先用 Go2 z, 否则用优化后的 LIO z.
+    # loop_dedup_window: 同一 target 在这么多查询关键帧内只保留第一条边.
+    overlap_min: 0.35
+    overlap_dist: 0.20
+    loop_max_yaw_delta: 0.52
+    loop_max_candidate_dz: 1.0
+    loop_dedup_window: 20
+
+    # 2026-11-09: 回环只约束 x/y/yaw。z 与 roll/pitch 由里程计链和
+    # （可选）Go2 软因子决定。走廊实测：6-DOF 回环把 z std 从
+    # 原始 LIO 的 0.311 拉到 0.383、末帧从 -0.017 拉到 +0.626。
+    # 需要回到旧行为时两项都设 true。
+    loop_constrain_z: false
+    loop_constrain_attitude: false
+    # 被放开 DOF 的方差。1e4 = std 100 m / 100 rad，相对里程计 (1e-4)
+    # 弱 8 个数量级，等价于不约束；不要用 0.25 这类“半放松”值。
+    # GTSAM Pose3 切空间顺序是 [Rx,Ry,Rz,Tx,Ty,Tz]，旋转在前。
+    loop_var_free: 1.0e4
+
+    # 2026-11-12 P1: 回环因子模式。
+    # projected_3dof: 真 3-DOF（world xy + yaw），z/roll/pitch 不进入因子，
+    #   坡面上 yaw/姿态修正不会耦合进世界 z。
+    # diagonal: P0 行为（BetweenFactor + 放开 z/roll/pitch 方差），精确回退。
+    # 模式与 loop_constrain_* 冲突时启动 WARN 并回退 diagonal。
+    loop_factor_mode: projected_3dof
+
+    # 2026-11-09: Go2 相对 z 软因子（相邻关键帧的 Δz）。默认关闭。
+    # /utlidar/robot_pose.z 的原点任意，所以只用差值，offset 自动抵消。
+    # 走廊实测：Go2 z std 0.005 m vs 原始 LIO 0.311 m。绝对值先验会把
+    # xy 闭合误差从 0.2 m 拉到 5.5 m（与轨迹 z 基准冲突），不要用。
+    enable_go2_z: false
+    go2_pose_topic: "/utlidar/robot_pose"
+    go2_pose_timeout: 0.30
+    # 1 cm。2026-11-09 修正 z 因子 Jacobian 后 1 cm 稳定
+    # (z std 0.094 / xy 0.116)；修正前 1 cm 崩 xy 是 Jacobian 错误导致的假象。
+    go2_z_var: 1.0e-4
+    go2_z_robust_scale: 5.0
+
+    # 2026-11-13 P2: IMU 重力软先验.
+    # cave-proxy 用它取代旧 Go2 姿态先验: 2.5D robot_pose 在坡面上会把
+    # pitch 拉平 (缓坡实测 PGO z 末值 -9.53 m), 而 IMU 重力是真实竖直.
+    enable_gravity_prior: true
+    # 重力源选择: lowstate(机身 IMU, 20 Hz, 无 header stamp) |
+    # livox(Mid360S 内部 IMU, 200 Hz, 有 stamp, 与 Point-LIO 前端同一颗) |
+    # utlidar(L2 内部 IMU, 250 Hz, 经 calibrate_imu 15.1° 变换+取反) |
+    # auto(优先 lowstate, 窗口内没有 lowstate 样本时自动落到 livox).
+    # 2026-11-14 实测 (corridor/slope bag, 0.3 s 低通 vs /utlidar/robot_pose):
+    #   livox    噪声 0.91/1.01 deg (走廊/坡面 std), 坡面 178 s 漂移 +0.10 deg
+    #   lowstate 噪声 1.47/1.57 deg,                坡面 178 s 漂移 +0.46 deg
+    #   utlidar  噪声 2.35/3.43 deg,                坡面 178 s 漂移 +0.14 deg
+    # 因此 cave-proxy 显式用 livox, 不用 auto: auto 在真机走 lowstate;
+    # 回放为腿 z 加入 /lf/lowstate 后 auto 还会静默切源, 破坏与历史 P2
+    # cave 基线的可比性. 切换方式: 改这一行即可.
+    gravity_source: livox
+    gravity_topic: ""
+    gravity_var_deg: 3.0
+    gravity_robust_scale: 3.0
+    gravity_timeout: 0.30
+    # 0.30 s 滑窗: 单帧 accel 在步态下 pitch std 8.3 deg, 平均后 2.9 deg
+    gravity_lowpass_s: 0.30
+    # 动态门控: 窗口平均比力模长偏离滑动中位数超过该比例则跳过该帧
+    # (台阶/跳跃; 现有场地触发率 ~0.15%%, 0 = 关闭)
+    gravity_norm_tol: 0.20
+    gravity_extrinsic_rpy: ""
+    gravity_roll_offset: 0.0
+    gravity_pitch_offset: 0.0
+    # 初版沿用 P1 的互斥保护: gravity 开时世界 z 连续性被 WARN+skip,
+    # 缓坡 A/B (allow_gravity_z_diff_coexist=true) 通过后才允许同开.
+    allow_gravity_z_diff_coexist: false
+
+    # 2026-11-13 P2: 地面法向连续性. 门/低特征段无有效地面时不加边,
+    # 缓存保留; 门后第一个有效帧与门前的最后有效帧相连.
+    enable_floor_normal_factor: false
+    floor_normal_var_deg: 2.0
+    floor_normal_max_step_deg: 10.0
+    floor_normal_max_gap_keyframes: 50
+
+    # 2026-11-09: Go2 roll/pitch 软先验 (旧路径, 已被重力先验取代).
+    # 缓坡实测: 开启时 PGO z 末值 -9.53 m (raw LIO +0.14 m), 关闭后 -0.40 m.
+    enable_go2_attitude: false
+    go2_attitude_var_deg: 3.0   # 1 sigma，步态振动下 2-5 deg 都合理
+
+    # 2026-11-18: 暂时不用 leg-kinematic world-z. 斜坡实测 leg z 累计
+    # -1.57 m 而 LIO 末端 -0.97 m，重访 |dz| PGO 0.26 m vs LIO 0.03 m；
+    # 起伏/碎石地面更容易破坏"支撑足不打滑 + 共面"假设。洞穴先跑本
+    # profile，原始 bag 离线用 cave_legz 复跑，按验收清单 A/B 后再决定。
+    enable_leg_z: false
+
+    # 2026-11-19: 洞穴先验地图定位. 默认关闭.
+    # 开启后, 每个关键帧(按 loop_search_frame_interval 步长)在 prior_map_dir
+    # 的先验关键帧里找 1.5 m 内的最近邻, ICP 通过门控后加一条**一元绝对约束**
+    # (world xy+yaw), target 是先验图这个常量. 先验资产由
+    # `make_prior_map` 从一次 /save_req 的落盘生成, 必须带 `# frame: body` 头.
+    # 平移一致性用绝对门限(不是 path 比例): 先验修正量 = 累积漂移, 与路径无关.
+    enable_prior_map: false
+    prior_map_dir: ""
+    prior_search_radius: 1.5
+    prior_max_trans_delta: 1.0
+    prior_icp_max_corr_dist: 1.0
+    prior_overlap_min: 0.35
+    prior_dedup_window: 20
+    prior_var_scale: 1.0

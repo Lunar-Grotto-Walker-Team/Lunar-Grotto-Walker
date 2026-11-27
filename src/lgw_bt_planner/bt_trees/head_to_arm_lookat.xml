@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  head_to_arm_lookat.xml — 持续 head 检测 → arm align → arm 检测 → 抓取。
+  跟 user_gated_auto_pick_and_place.xml 同骨架(ReactiveFallback root +
+  Repeat num_cycles="-1" + Sequence),任一步骤失败都不停整树,而是
+  跳过失败步骤进入下一步。
+
+  循环逻辑(spec):
+    - 在 user 发送 /bt_user_input "data: true" 前,BT 一直循环 head 检测
+    - head 看到目标:
+        → ComputeLookatPose + MoveArmToPose 把 arm 相机光轴对准目标
+    - 然后检测 arm 是否也看到:
+        - 看到 → open gripper → close gripper(抓)
+        - 没看到 → 跳过抓取步骤
+    - 不论如何回 home,进入下一轮
+
+  结构:
+    ReactiveFallback
+      child 1: WaitForUserInput            (user msg → 整树 SUCCESS)
+      child 2: Repeat num_cycles="-1"
+                child: Sequence "lookat_cycle"
+                  step 1: Fallback "if_head_seen_align"
+                          child 1: Sequence "align_step"
+                                     IsHeadDetectionConfirmed
+                                     ComputeLookatPose
+                                     MoveArmToPose
+                          child 2: ForceSuccess "head_not_seen_skip"
+                  step 2: Fallback "if_arm_seen_grasp"
+                          child 1: Sequence "grasp_step"
+                                     IsArmDetectionConfirmed
+                                     MoveArmToNamed "gripper_open"
+                                     MoveArmToNamed "gripper_close"
+                          child 2: ForceSuccess "arm_not_seen_skip"
+                  step 3: MoveArmToNamed "return_home"          (named_target="home")
+
+  设计说明:
+    - 用标准 Fallback(非 ReactiveFallback)做"if-then-else":head/arm 检测
+      一旦本轮内被读取并返回 SUCCESS,后面 ComputeLookatPose/MoveArmToPose
+      不会被 mid-tick 打断。ReactiveFallback 每 tick 重评 child 1,容易在
+      obs_age 边界翻转导致正在执行的 MoveArmToPose 被 onHalt() cancel。
+    - 失败路径用 ForceSuccess 把"未命中"转 SUCCESS,Sequence 顺利推进;
+      MoveArmToPose 真的 IK 失败仍会 FAILURE → Fallback 走 child 2 →
+      ForceSuccess 转 SUCCESS → Sequence 继续 → 仍能回 home。
+    - ForceSuccess 是 BT.CPP v4 内置 decorator,无需注册。
+
+  Pose literal 格式(SetPoseStamped):frame_id;x;y;z;qx;qy;qz;qw
+  参考系:world (== base_link, world→base_link fixed joint xyz=0 rpy=0)
+
+  抓取 named_target 来自 SRDF(agx_arm.srdf / .srdf.xacro):
+    gripper_open / gripper_half / gripper_close 在
+    <xacro:if value="$(eval effector_type == 'agx_gripper')"> 块。
+    路由由 named_target_loader.cpp:23-24 根据 group= 属性自动选择
+    planning group。
+-->
+<root BTCPP_format="4" main_tree_to_execute="HeadToArmLookat">
+  <BehaviorTree ID="HeadToArmLookat">
+    <ReactiveFallback name="root">
+      <WaitForUserInput name="wait_user_input" topic_name="/bt_user_input"/>
+
+      <Repeat name="auto_loop" num_cycles="-1">
+        <Sequence name="lookat_cycle">
+          <!-- step 1: head 看到 → 计算 lookat pose 并移动 arm 对准 -->
+          <Fallback name="if_head_seen_align">
+            <Sequence name="align_step">
+              <IsHeadDetectionConfirmed name="check_head"
+                topic_name="/perception/two_stage/camera_head/result"
+                max_age_sec="0.3"
+                last_observation="{last_head_obs}"/>
+
+              <ComputeLookatPose name="compute_lookat"
+                head_observation="{last_head_obs}"
+                ee_position_world="0.5;0.0;0.3"
+                world_frame="world"
+                output_pose_key="lookat_pose"/>
+
+              <MoveArmToPose name="move_to_lookat" goal="{lookat_pose}"/>
+            </Sequence>
+            <ForceSuccess name="head_not_seen_skip">
+              <AlwaysSuccess/>
+            </ForceSuccess>
+          </Fallback>
+
+          <!-- step 2: arm 也看到 → 抓(开 → 合);没看到 → 跳过抓取 -->
+          <Fallback name="if_arm_seen_grasp">
+            <Sequence name="grasp_step">
+              <IsArmDetectionConfirmed name="check_arm"
+                topic_name="/perception/two_stage/camera_arm/result"
+                max_age_sec="0.3"
+                last_observation="{last_arm_obs}"/>
+
+              <MoveArmToNamed name="open_gripper"
+                named_target="gripper_open"
+                named_targets="{@named_targets}"/>
+
+              <MoveArmToNamed name="close_gripper"
+                named_target="gripper_close"
+                named_targets="{@named_targets}"/>
+            </Sequence>
+            <ForceSuccess name="arm_not_seen_skip">
+              <AlwaysSuccess/>
+            </ForceSuccess>
+          </Fallback>
+
+          <!-- step 3: 无论前两步如何,每轮回 home -->
+          <MoveArmToNamed name="return_home" named_target="home"
+            named_targets="{@named_targets}"/>
+        </Sequence>
+      </Repeat>
+    </ReactiveFallback>
+  </BehaviorTree>
+</root>

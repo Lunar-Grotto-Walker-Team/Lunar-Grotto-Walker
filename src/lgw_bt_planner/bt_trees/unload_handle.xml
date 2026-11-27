@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  unload_handle.xml — "卸货"动作序列 (2026-11-17)
+
+  动作链:
+    0. 初始化                  MoveArmToNamed home + 夹爪张到最大 0.1 m
+                               (整段任务里夹爪只动作这一次, 之后一直保持全开)
+    1. 到把手上方              MoveArmToPose
+    2. 插入把手                MoveArmToPose
+    3. 拉动                    MoveArmToPose
+    4. 推回                    MoveArmToPose
+    5. 再次到把手上方          MoveArmToPose   (复用第 1 步的位姿)
+    6. 回 park                 MoveArmToNamed  named_target="home"
+
+  位姿来源: 2026-11-17 手动摆位后从 /feedback/tcp_pose 记录
+  (scripts/record_tcp_pose.sh)。frame = world == arm1/base_link。
+
+  姿态统一: 夹住把手后拉/推是刚体平移, 姿态必须全程不变, 所以 pulled 与
+  pushed_back 都用 at_handle 的 quaternion(手动摆位时腕部有 ~20° 偏差,
+  直接用会让把手被拧)。位置各用各自记录值。
+
+  ControlGripper 说明: 直接向 /gripper_controller/joint_trajectory 发两点
+  轨迹(起点写当前实测值)。力判据用 |force| —— 实测夹住时
+  /feedback/gripper_status.force 为负值(量级约等于 gripper_default_effort)。
+
+  停止: BT.CPP v4 的 Sequence 成功后保持 child 状态, 要重跑需重启 bt_runner。
+
+  用法: 起 bt_runner 时 bt_xml 指向本文件即可, 进树立即开始初始化。
+-->
+<root BTCPP_format="4" main_tree_to_execute="UnloadHandle">
+  <BehaviorTree ID="UnloadHandle">
+    <Sequence name="main">
+
+      <!-- 0. 初始化: 先回 home, 再把夹爪开到最大。之后到任务结束夹爪都不再
+           动作, 保持张开状态穿过整段接近/插入路径。 -->
+      <MoveArmToNamed name="init_move_home"
+                      named_target="home"
+                      named_targets="{@named_targets}"/>
+      <ControlGripper name="init_open_gripper"
+                      target_width="0.1"
+                      duration="1.0"
+                      timeout="3.0"/>
+
+      <!-- 1. 到把手上方 -->
+      <SetPoseStamped name="set_above_handle"
+                      output_key="p_above_handle"
+                      value="world;0.060453;0.212912;0.123048;-0.014285;0.999595;-0.021924;0.011182"/>
+      <MoveArmToPose name="move_to_above_handle" goal="{p_above_handle}"/>
+
+      <!-- 2. 插入把手 -->
+      <SetPoseStamped name="set_at_handle"
+                      output_key="p_at_handle"
+                      value="world;0.050191;0.216312;0.001858;-0.034175;0.998510;-0.040224;-0.013880"/>
+      <MoveArmToPose name="move_to_at_handle" goal="{p_at_handle}"/>
+
+      <!-- 3. 拉动: y/z 取 at_handle 的值, 只改 x, 保证与插入点共线且平行于
+           X 轴(2026-11-17 加入)。
+           原记录 (0.270888, 0.214297, -0.009755) 的 y 差 +2.0 mm、z 差
+           +11.6 mm, 会走成斜线。 -->
+      <SetPoseStamped name="set_pulled"
+                      output_key="p_pulled"
+                      value="world;0.270888;0.216312;0.001858;-0.034175;0.998510;-0.040224;-0.013880"/>
+      <MoveArmToPose name="move_to_pulled" goal="{p_pulled}"/>
+
+      <!-- 4. 推回: 姿态用 2026-11-17 重新示教的版本(与 at_handle 差约 33°,
+           这是本次要改的部分); 位置只用示教的 x=0.049627, y/z 仍取 at_handle
+           的值, 保持三点共线平行 X 轴(示教 y 差 -2.2 mm、z 差 -4.0 mm 被拉回)。
+           x 只比插入点浅 0.56 mm, 之前"深 13.8 mm"的要求已随之取消。 -->
+      <SetPoseStamped name="set_pushed_back"
+                      output_key="p_pushed_back"
+                      value="world;0.049627;0.216312;0.001858;-0.001942;0.954681;-0.004757;-0.297586"/>
+      <MoveArmToPose name="move_to_pushed_back" goal="{p_pushed_back}"/>
+
+      <!-- 5. 再次到把手上方 (复用第 1 步的位姿) -->
+      <MoveArmToPose name="move_to_above_handle_again" goal="{p_above_handle}"/>
+
+      <!-- 6. 回 park (SRDF 的 home: j2=0.30, j3=-0.20) -->
+      <MoveArmToNamed name="return_to_park"
+                      named_target="home"
+                      named_targets="{@named_targets}"/>
+
+    </Sequence>
+  </BehaviorTree>
+</root>

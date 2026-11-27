@@ -1,0 +1,15 @@
+# colcon 产物(本包为 src/ 下的独立仓库,不会被 colcon 忽略)
+build/
+install/
+log/
+
+# python
+__pycache__/
+*.pyc
+
+# IDE
+/.idea/
+/.vscode/
+
+
+

@@ -1,0 +1,82 @@
+# HeadToArmLookat BT — 手动操作指令
+#
+# 用法:终端 A 跑 `./scripts/start_lgw_head_to_arm_lookat.sh`(起 bringup),
+# 终端 B 用下面的指令驱动 BT。所有 docker exec 都:
+#   1. 用 -e LGW_INSTALL= 显式指向 fork 的 install(避免被 caller-leaked
+#      父 ws LGW_INSTALL 静默带歪,与 start 脚本 fdf888a 行为对齐)
+#   2. 用 bash -lc 登录 shell
+#   3. 进容器后 source /my_ws/l4t/l4t_setup.sh(CLAUDE.md 硬约束)
+#
+# 如果你想偷懒,先在终端 B 顶层 export 一次:
+#   export LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash
+# 然后下面 docker exec 里的 -e 仍然建议保留(防御性)。
+
+# ---- 1. 等 /lgw_bt_execution action server 起来 ----
+# (脚本起 launch 后大约等 30-60s,看到 "action server 就绪" 即可)
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash \
+  -it self_l4t bash -lc '
+    source /my_ws/l4t/l4t_setup.sh
+    ros2 action list | grep lgw_bt_execution
+'
+# 期望输出:/lgw_bt_execution
+
+# ---- 2. send_goal 触发 BT(启动视觉伺服循环) ----
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash \
+  -it self_l4t bash -lc '
+    source /my_ws/l4t/l4t_setup.sh
+    ros2 action send_goal /lgw_bt_execution \
+      btcpp_ros2_interfaces/action/ExecuteTree \
+      "{\"target_tree\": \"HeadToArmLookat\"}" --feedback
+'
+# 期望:action ACCEPTED → BT RUNNING。WaitForUserInput 首次 tick FAILURE →
+# Repeat 进入循环。head 看到目标 → ComputeLookatPose 算 pose → MoveArmToPose
+# 移动 → arm 相机确认 → 回 home → 下一轮。
+
+# ---- 3. halt(优雅停) ----
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash \
+  -it self_l4t bash -lc '
+    source /my_ws/l4t/l4t_setup.sh
+    ros2 topic pub --once /bt_user_input std_msgs/Bool "data: true"
+'
+# 期望:WaitForUserInput SUCCESS → 整树 SUCCESS → Repeat 停。send_goal 终端
+# 收到 SUCCESS feedback。
+
+# ---- 4. 实时看 launch 日志(调试) ----
+tail -f /home/unitree/my_ws/l4t/lg_walker_ws/.run/lgw_head_to_arm_lookat_*.log
+# 容器内 BT runner 用 root 写日志,所以文件是 root-owned,只读 OK。
+
+# ---- 5. 看 BT 节点实时状态(Groot2 或直接读 blackboard) ----
+# 简单办法:看 /bt_user_input 主题是否被 publish 过(说明 halt 路径走通)
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash \
+  -it self_l4t bash -lc '
+    source /my_ws/l4t/l4t_setup.sh
+    ros2 topic echo /bt_user_input --once
+'
+# 进阶:看 MoveArmToPose 当前目标(应在循环里持续更新)
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash \
+  -it self_l4t bash -lc '
+    source /my_ws/l4t/l4t_setup.sh
+    ros2 topic echo /lgw_bt_planner/current_pose --once
+'
+
+# ---- 6. 停 bringup(在终端 A 按 Ctrl-C,不是这里) ----
+# start 脚本的 trap 会自动 PID 阶梯清理(TERM → 3s → KILL)。
+# 禁忌:pkill -f ros / killall / kill -1(CLAUDE.md 硬约束)。
+# 如果 trap 没触发(脚本被 kill -9 之类),手动阶梯:
+docker exec self_l4t ps aux | grep -E 'ros2|bt_runner|agx_arm|move_group'
+# 找到 PID,先 docker exec self_l4t kill -TERM <pid>,等 3s,
+# 还活着就 docker exec self_l4t kill -KILL <pid>。
+
+# ---- 7. 验收失败的快速排查 ----
+# 7a) action server 没起来 → 看 .run/lgw_*log 里 lgw_bt_planner 启动行
+# 7b) send_goal 收到 "tree not found" → TreeID 拼写错了(应为 HeadToArmLookat)
+# 7c) send_goal 收到 "node not registered" → 插件没导出 ComputeLookatPose,
+#     重新 build + source l4t_setup.sh:
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash \
+  -it self_l4t bash -lc '
+    source /my_ws/l4t/l4t_setup.sh
+    nm -D /my_ws/l4t/lg_walker_ws/install/lgw_bt_planner/share/lgw_bt_planner/bt_plugins/lgw_bt_planner_nodes.so | grep -i ComputeLookatPose
+'
+#     期望看到 _ZN16lgw_bt_planner21ComputeLookatPoseNode... 符号。
+# 7d) BT 跑起来但 head 没检测 → /perception/two_stage/camera_head/result 没数据,
+#     检查 YOLOE detection workflow 是否启动。

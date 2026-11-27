@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<!--
+  detection_condition_test.xml — minimal demo for the two new leaf
+  nodes. SequenceWithMemory + RetryUntilSuccessful pattern:
+
+  - SequenceWithMemory (a.k.a. SequenceStar) tick children in order but
+    remembers which children already returned SUCCESS — see
+    include/behaviortree_cpp/controls/sequence_with_memory_node.cpp.
+    Its halt() deliberately does NOT reset current_child_idx_, so the
+    next tick after a FAILURE skips children that already succeeded
+    instead of re-evaluating them.
+
+  - RetryUntilSuccessful num_attempts="100" wraps the SequenceWithMemory.
+    On child FAILURE it resets the child and re-ticks it up to 100
+    times. At 100 Hz tick_frequency 100 attempts ≈ 10 s window per goal;
+    YOLOE publishes at ~1.5 Hz so a CONFIRMED message lands well within
+    that window under healthy perception.
+
+  Why this is the right shape for the polling strategy decided with the
+  user (2026-09-29): each action goal is a finite BT mission
+  (per the BT.CPP design philosophy — see BehaviorTree.CPP/CLAUDE.md).
+    - the goal tries up to 100 attempts to catch a frame where both
+      head + arm last CONFIRMED within max_age_sec;
+    - if it succeeds, the whole BT SUCCESSES;
+    - if it runs out of attempts, the whole BT FAILUREs.
+  The "wait forever for both cameras to CONFIRMED" semantic lives in
+  the OUTER driver (test_yoloe_poll_loop.sh) — it re-sends the goal
+  immediately after each previous goal completes (SUCCEEDED or
+  ABORTED) for a fixed wall-clock budget (60 s). The driver tallies
+  how many goals succeeded vs. failed.
+-->
+<root BTCPP_format="4">
+  <BehaviorTree ID="DetectionConditionTest">
+    <RetryUntilSuccessful num_attempts="100" name="root_loop">
+      <SequenceWithMemory name="root">
+        <IsHeadDetectionConfirmed
+          topic_name="/perception/two_stage/camera_head/result"
+          max_age_sec="2.5"
+          last_observation="{last_head_obs}"/>
+        <IsArmDetectionConfirmed
+          topic_name="/perception/two_stage/camera_arm/result"
+          max_age_sec="2.5"
+          last_observation="{last_arm_obs}"/>
+      </SequenceWithMemory>
+    </RetryUntilSuccessful>
+  </BehaviorTree>
+</root>

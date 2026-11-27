@@ -1,0 +1,122 @@
+<!--
+  track_collect_reactive_v2_no_nav.xml — 不含导航的 V2(上一版行为, 2026-11-20)。
+
+  用途: 现场狗由操作员遥控, 树只负责"站/趴 + 采集 + 卸货"。
+  和 track_collect_reactive_v2.xml(带 TransitMission / TransitPatrol /
+  TransitReturn 的完整任务链)的区别**只有任务骨架**:
+
+    本树:   init -> Repeat(-1){ 等目标 -> 采集 -> 回基地卸货 }
+    完整版: init -> 摆渡到洞口 -> 巡逻(途中采集) -> 回基地 -> 卸货 -> 结束
+
+  采集逻辑两边共用 collect_one.xml(ID CollectOne), 不要在任何一棵里
+  再写一份。
+
+  ── 流程 ─────────────────────────────────────────────────────
+    init     开夹爪 -> 钉基地屏蔽圈 -> 释放遗留选中 -> 记录基地圆心
+             -> samples:=0 -> 臂回 home -> 站起 -> 平衡站立 -> 经典步态
+             -> 接管伺服(best-effort)
+    per target(循环):
+             选中目标新鲜(IsTargetAvailable)
+             -> 目标进 XoY <= 0.55 m 带(WaitUntilTargetNear)
+             -> CollectOne(趴下验证 -> 采样位姿 -> 抓取 -> 放置 -> 站起
+                           -> 重新接管伺服)
+             没有目标就空转一轮。
+    unload   每一轮之后: samples>0 且回到基地圆心 0.25 m 内
+             -> 平衡站立 -> 趴下 -> UnloadHandle -> 站起 -> 回步态
+             -> samples:=0 -> 重新接管伺服。
+
+  ── 注意 ─────────────────────────────────────────────────────
+  * 本树不含任何导航节点, 也不会触发 /start_mapping;
+    TransitToLocalPoint / go2_transit 插件都不需要。
+  * IsTargetAvailable 的门槛是"被选中且新鲜", 选中策略在 tracker 里
+    (select_target: 优先近的/置信度高的)。狗走到目标 0.55 m 内之前,
+    WaitUntilTargetNear 会一直 RUNNING —— 期间操作员可以正常遥控行走。
+  * 趴下/站起/步态的顺序不能乱: BalanceStand 会清步态标志, 之后必须
+    重发 classic_walk; 趴着不能走。
+  * 交付 MoveIt 之前必须 ServoRelease(HOLD 只能靠 RELEASE 出来) ——
+    这条不变式在 collect_one.xml 内部维护, 本文件不重复。
+-->
+<root BTCPP_format="4" main_tree_to_execute="TrackCollectReactiveV2NoNav">
+  <BehaviorTree ID="TrackCollectReactiveV2NoNav">
+    <Sequence name="init_then_loop">
+      <ControlGripper target_width="0.1"/>
+      <!-- 基地屏蔽圈: 把圆心钉在"任务起点"这一时刻机器人的 odom 位置,
+           tracker 据此丢弃圆心 2.5 m 内的新观测。 -->
+      <ForceSuccess>
+        <MarkTrack track_id="0" action="6"/>
+      </ForceSuccess>
+      <!-- 释放上一轮遗留的选中目标: tracker 的选目标是粘性的, 上一轮被
+           取消时留下的目标可能已经离得很远, 会让 init 的 ServoTakeover
+           在 preposition 处解不出注视位姿而被拒。 -->
+      <ForceSuccess>
+        <MarkTrack track_id="0" action="4"/>
+      </ForceSuccess>
+      <!-- 行为树自己记一份基地圆心(odom), 供 IsWithinBaseRadius 判断
+           "回没回到基地"。 -->
+      <ForceSuccess>
+        <RecordBasePose output_key="base_center"/>
+      </ForceSuccess>
+      <!-- 已采集样品计数(每次放置成功后 +1; 卸货完清零)。 -->
+      <Script code="samples := 0"/>
+      <MoveArmToNamed named_target="home" named_targets="{@named_targets}"/>
+      <StandUp/>
+      <BalanceStand/>
+      <SwitchGait gait_name="classic_walk" enable="true"/>
+      <!-- ForceSuccess: 当前选中的目标可能还在远处, preposition 解不出
+           注视位姿会拒绝接管; 每个目标真正采集前 CollectOne 里还会再接管。 -->
+      <ForceSuccess><ServoTakeover/></ForceSuccess>
+
+      <Repeat num_cycles="-1">
+        <Sequence name="loop_body">
+          <Fallback name="target_or_idle">
+            <Sequence name="target_task">
+              <IsTargetAvailable max_age_ms="1000" track_id="{track_id}"/>
+              <!-- 接近判据: 只看距离, 方位判据关闭(max_azimuth_rad=0)。
+                   需要时把 max_azimuth_rad 设回 0.2618(±15°)、
+                   sector_center_rad 保持 0 即可, 不用改代码。 -->
+              <WaitUntilTargetNear min_xy_m="0.0" max_xy_m="0.55"
+                                   max_azimuth_rad="0.0"
+                                   timeout_ms="120000"/>
+              <!-- 采集: 平衡站立 -> 接管 -> 趴下 -> 验证 -> 位姿 -> 抓取
+                   -> 放置 -> 站起 -> 回步态 -> 重新接管。
+                   失败在内部消化并恢复(返回 SUCCESS); 只有臂相机断流
+                   才返回 FAILURE, 落到下面的 absent 兜底 —— 这里用
+                   ForceSuccess 把它也吞掉, 保持"循环永不因采集失败退出"。 -->
+              <!-- _autoremap="true" 必须加: 子树的黑板默认不向父黑板查找
+                   (blackboard.cpp 的 getEntry 只有 autoremapping_ 为真时才
+                   回落), 所以 samples / track_id / pre_grasp_pose 这些不带
+                   "@" 的键在子树里会是空的。实测报错:
+                   "Error in script [samples := samples + 1]: the left operand
+                    of the operator [+] is not initialized"。
+                   `{@named_targets}` 一直能用是因为 "@" 是"永远查 root 黑板"
+                   的特殊语法, 与本条无关。 -->
+              <ForceSuccess>
+                <SubTree ID="CollectOne" _autoremap="true"/>
+              </ForceSuccess>
+            </Sequence>
+            <!-- 没有新鲜目标: 空转一轮, 继续循环。 -->
+            <AlwaysSuccess/>
+          </Fallback>
+
+          <!-- 回基地卸货: samples>0 且狗回到基地圆心 0.25 m 内。 -->
+          <Fallback name="unload_gate">
+            <Sequence name="unload_at_base">
+              <ScriptCondition code="samples > 0"/>
+              <IsWithinBaseRadius radius_m="0.25"/>
+              <ServoRelease/>
+              <BalanceStand/>
+              <StandDown/>
+              <SubTree ID="UnloadHandle"/>
+              <StandUp/>
+              <BalanceStand/>
+              <SwitchGait gait_name="classic_walk" enable="true"/>
+              <Script code="samples := 0"/>
+              <ServoTakeover/>
+            </Sequence>
+            <AlwaysSuccess/>
+          </Fallback>
+        </Sequence>
+      </Repeat>
+    </Sequence>
+  </BehaviorTree>
+</root>

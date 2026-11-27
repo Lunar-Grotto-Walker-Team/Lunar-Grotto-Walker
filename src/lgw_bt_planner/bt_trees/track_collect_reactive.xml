@@ -1,0 +1,311 @@
+<!--
+  track_collect_reactive.xml — collect mission with grasp retry.
+
+  Lifecycle (2026-11-19, 简化版: 单次尝试, 不做重试):
+    * init: open gripper, pin base circle, record base pose, samples:=0,
+      arm home, stand up, balance stand, classic gait, ServoTakeover once.
+    * per target: wait for a fresh selected target -> wait until it is inside
+      the distance band AND the +-15 deg front sector -> present branch:
+      lean 20 deg -> settle -> clear arm hits -> release Servo -> settle ->
+      compute poses -> move to pre-grasp -> verify (arm camera hits) ->
+      grasp once -> home.
+      The lean lives INSIDE present on purpose: every failure inside it lands
+      on the absent / camera_dead branches, which clear the body pose, so the
+      approach gate is always evaluated with the dog level (leaning shifts
+      the arm base ~6 cm).
+    * Body-pose clear always re-asserts classic_walk: clear() sends
+      Euler(0) + BalanceStand, which drops the gait flag.
+
+  Poses are COMPUTED, not frozen: ComputeGraspPosesFromTrack builds the
+  orientation analytically from "current tcp position -> target" (same math
+  as ComputeGraspPose: build_lookat_orientation + uprightness flip, then
+  multiply by the hand-eye inverse).  Servo state therefore no longer matters
+  for the pose; the ServoRelease at the top of present only hands control to
+  MoveIt.  Servo has exactly two jobs in this tree: track while walking, and
+  be released before planning.
+
+  Grasp-success test: ControlGripper(require_force=true) turns "closed to
+  the target width without ever building contact force" into FAILURE.
+
+  Failure == recovery.  Any failure inside present (move, verification,
+  grasp) falls through to absent / camera_dead, which do the recovery:
+  retract the arm home first, then unselect the target (MarkTrack action=2),
+  clear the body pose, wait for it to settle, re-assert the gait, and take
+  Servo over again so the next target gets tracked.  The invariant is:
+  whenever the tree is waiting for a target, the servo is SCANNING/TRACKING.
+  Leaving the lean up dropped the gait flag and the operator drove a pitched,
+  gaitless robot — it fell on 2026-11-18.  Every exit path from the tilted
+  state must clear the pose.
+
+  On success: grasp -> home -> consume the track -> clear the lean -> place
+  the sample at p_place_pose and open the gripper -> count it (blackboard
+  `samples`) -> arm home -> take over again for the next target.
+
+  Unload at the base (2026-11-18): after every loop pass, if `samples > 0`
+  and the robot is within 0.25 m (XoY) of the base centre recorded at init
+  (RecordBasePose + MarkTrack action=6), the tree releases Servo, does
+  BalanceStand -> StandDown -> SubTree UnloadHandle -> StandUp ->
+  BalanceStand -> classic_walk, zeroes the counter and takes over again.
+
+  Grasp poses come from ComputeGraspPosesFromTrack (arm base frame):
+      grasp      = target position, tcp orientation = look-at
+      pre_grasp  = 250 mm back along the camera optical axis (2026-11-19)
+
+  Why 250 mm: the hand-eye JSON puts the arm camera 114 mm from the tcp, of
+  which 106 mm lies behind the tcp along the optical axis.  So the
+  camera->target range at the pre-grasp pose is offset + 106 mm:
+      150 mm -> 256 mm  below the D435's recommended range (0.3 m)
+      180 mm -> 286 mm  real-robot run: depth almost entirely invalid there
+                        (arm camera saw the block but produced 0 valid depth
+                        normals -> verification could never pass)
+      250 mm -> 356 mm  inside the recommended band, still well within reach
+  The 250 mm value is a port override so it can be tuned without a rebuild.
+-->
+<root BTCPP_format="4" main_tree_to_execute="TrackCollectReactive">
+  <BehaviorTree ID="TrackCollectReactive">
+    <Sequence name="init_then_loop">
+      <ControlGripper target_width="0.1"/>
+      <!-- 基地屏蔽圈: 把圆心钉在"任务起点"这一时刻机器人的 odom 位置。
+           tracker 据此丢弃圆心 2.5 m 内的新观测, 避免基地里已采集/堆放的目标
+           被重复识别成新目标。用 ForceSuccess 包住: TF 还没准备好时不该
+           把整棵树的初始化断掉(tracker 侧会打 warn)。 -->
+      <ForceSuccess>
+        <MarkTrack track_id="0" action="6"/>
+      </ForceSuccess>
+      <!-- 行为树自己也记一份基地圆心(odom 系), 供 IsWithinBaseRadius 判断
+           "回没回到基地"。同样 ForceSuccess: TF 未就绪时不该断掉初始化,
+           只是这一轮不会触发卸货。 -->
+      <ForceSuccess>
+        <RecordBasePose output_key="base_center"/>
+      </ForceSuccess>
+      <!-- 已采集样品计数(每次放置成功后 +1; 回基地卸货完清零)。 -->
+      <Script code="samples := 0"/>
+      <MoveArmToNamed named_target="home" named_targets="{@named_targets}"/>
+      <StandUp/>
+      <BalanceStand/>
+      <SwitchGait gait_name="classic_walk" enable="true"/>
+      <ServoTakeover/>
+
+      <Repeat num_cycles="-1">
+        <Sequence name="loop_body">
+          <Fallback name="target_or_idle">
+            <Sequence name="target_task">
+              <IsTargetAvailable max_age_ms="1000" track_id="{track_id}"/>
+              <!-- 接近判据: 距离带 + 正前方扇区(2026-11-19 用户要求)。
+                   max_azimuth_rad=0.2618 rad(15 deg): 目标相对臂基座 +X 轴的
+                   方位角必须 <= 15 度 —— 只看"够近"会让机械臂往侧后方伸,
+                   那片姿态容易撞限位/奇异。 -->
+              <WaitUntilTargetNear min_xy_m="0.0" max_xy_m="0.55"
+                                   max_azimuth_rad="0.2618"
+                                   timeout_ms="120000"/>
+              <!-- Decision only: present vs absent.  Execution lives inside
+                   the present branch and can never reach "absent". -->
+              <Fallback name="verify">
+                <Sequence name="present">
+                  <!-- 低头放在 present 分支内部(2026-11-19): 这样"倾斜"只
+                       存在于这一个分支里, 而 present 的任何失败都会落到下面的
+                       absent / camera_dead —— 两者都会 SetBodyPose clear +
+                       重发步态。由此保证:
+                         a) WaitUntilTargetNear 一定在站立姿态下评估(低头会把
+                            臂基座前移 ~6 cm, 实测 XoY 0.534 -> 0.595, 会让
+                            重入时误判"出带"而空等);
+                         b) 不存在"从倾斜态退出却没人清姿态"的路径。 -->
+                  <!-- 20 deg (0.3491 rad). 2026-11-19 user tuning: 30 -> 25 -> 20.
+                       角度越小: 臂基座前移越少(门限评估更稳)、低头/抬头过渡越缓和,
+                       但臂基座也更靠后, 抓取位可达性略变差。 -->
+                  <SetBodyPose pitch="0.3491"/>
+                  <!-- 低头要 1~2 s 才真正到位(SetBodyPose 发完即返回, 不验证),
+                       而 arm 命中窗口是 3 s。先等沉降, 再清命中历史。 -->
+                  <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                  <!-- 清当前目标的 arm 命中历史。2026-11-19 起 tracker 对
+                       "被选中的轨迹"豁免 active TTL, 所以 {track_id} 在本次任务
+                       期间不会滚动, 可以按 id 精确打标(语义: 打我当时操作的那个)。
+                       ForceSuccess 兜底: 清命中失败不该打断采集流程。 -->
+                  <ForceSuccess>
+                    <MarkTrack track_id="{track_id}" action="5"/>
+                  </ForceSuccess>
+
+                  <!-- 2026-11-19 (用户要求): 验证回到"伺服注视位姿"下做。
+                       伺服此时是 TRACKING, 臂相机正对目标, 命中判定最可靠;
+                       验证通过之后才冻结伺服、计算位姿、接近、抓取。
+                       预抓取位姿的解析计算不可靠时, 这一步不会再被它连累。 -->
+                  <WaitForArmHits min_hits="3" timeout_ms="5000"/>
+
+                  <!-- 停掉伺服, 避免它和 MoveGroup 抢同一个控制器。
+                       2026-11-19 起位姿**不再取自冻结的伺服姿态**:
+                       ComputeGraspPosesFromTrack 用"当前 TCP 位置 → 目标点"
+                       解析构造姿态(build_lookat_orientation + uprightness
+                       flip), 所以这里 release 只是为了把控制权交给 MoveIt,
+                       伺服处于 TRACKING / IDLE / SCANNING 都不影响位姿。
+                       ForceSuccess 兜住: 释放被拒(FAULT)不该把整支打成
+                       "目标不存在"。 -->
+                  <ForceSuccess><ServoRelease/></ForceSuccess>
+                  <!-- 2026-11-19 真机: ServoRelease 之后必须等关节停稳再规划。
+                       释放前伺服还在往 JTC 推跟踪轨迹(低头瞬间尤其明显), 释放
+                       后 arm 仍会继续走到最后一个指令点。上一轮 release 与
+                       MoveGroup 目标只隔 4 ms, 规划起点与控制器状态差 0.0162 rad
+                       > allowed_start_tolerance 0.01 -> "Invalid Trajectory:
+                       start point deviates..." -> MoveGroup 返回 -4,
+                       整个目标被判成"不存在"。0.8 s 够 JTC 走完最后一点。 -->
+                  <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+
+                  <!-- 验证通过 -> 算位姿 -> 接近 -> 抓。只做一次; 任何一步失败
+                       都落到 absent / camera_dead 走恢复流程。
+                       预抓取 25 cm: 相机-目标 0.356 m, 落回 D435 推荐区间。 -->
+                  <ComputeGraspPosesFromTrack pre_grasp_distance_m="0.25"/>
+                  <MoveArmToPose goal="{pre_grasp_pose}"/>
+
+                  <!-- 已在预抓取位: 直接抓 → 合爪 → 退回预抓取位 → 回 home。
+                       任何一步失败都会落到 absent 走恢复流程。 -->
+                  <MoveArmToPose goal="{grasp_pose}"/>
+                  <!-- max_force is a contact threshold; tune to the
+                       driver's gripper effort on real hardware
+                       (measured: empty ~+0.07 N, held ~-1.05 N). -->
+                  <ControlGripper target_width="0.0" max_force="1.0"
+                                  require_force="true"/>
+                  <MoveArmToPose goal="{pre_grasp_pose}"/>
+                  <MoveArmToNamed named_target="home"
+                                  named_targets="{@named_targets}"/>
+
+                  <!-- 抓到手后立刻消费目标。2026-11-19 起 tracker 对
+                           "被选中的轨迹"豁免 active TTL, {track_id} 在任务期间
+                           保持有效, 所以按 id 精确消费(避免误消费后来被选中
+                           的别的目标)。ForceSuccess 兜底: 归档/dedupe/容量
+                           淘汰仍可能让 id 失效, 而"抓到手的东西必须放下去"
+                           —— 失败绝不能打断成功收尾。 -->
+                      <ForceSuccess>
+                        <MarkTrack track_id="{track_id}" action="1"/>
+                      </ForceSuccess>
+
+                  <!-- Release the body-pose adjustment: back to normal.
+                       clear() sends Euler(0) + BalanceStand, which drops
+                       the gait flag; re-assert classic_walk before moving.
+                       放置位姿是在**站直**状态下示教的, 所以先回正再放。 -->
+                  <SetBodyPose clear="true"/>
+                  <!-- 2026-11-18: clear 只发一次 Euler(0)+BalanceStand 就返回,
+                       不等狗真正回正(实测 clear 瞬间 pitch 还有 26°)。
+                       立刻发 gait 会在姿态过渡期被固件丢掉 —— 真机现象是
+                       抓取成功后狗停在平衡站立、走不动。这里等 1.5 s 沉降。 -->
+                  <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                  <SwitchGait gait_name="classic_walk" enable="true"/>
+
+                  <!-- 放置样品: 到放置位 → 张开夹爪放下。
+                       位姿是 2026-11-18 手动摆位后从 /feedback/tcp_pose
+                       记录的(当时断了 /control/joint_states 命令链),
+                       关节角 [2.032872, 0.741451, -0.751068, 0.298242,
+                       1.165758, -0.020420]。 -->
+                  <SetPoseStamped output_key="p_place_pose"
+                                  value="world;-0.124978;0.123112;0.211858;0.807774;-0.515405;-0.286014;-0.007360"/>
+                  <MoveArmToPose goal="{p_place_pose}"/>
+                  <ControlGripper target_width="0.1"/>
+                  <!-- 样品放好 = 一件采集完成, 计数 +1(回基地后据此决定卸货) -->
+                  <Script code="samples := samples + 1"/>
+                  <!-- 放置完先回 park 再接管: 从贴近桌面的放置位直接让
+                       Servo 扫视, 摆幅太大且可能蹭到桌面。 -->
+                  <MoveArmToNamed named_target="home"
+                                  named_targets="{@named_targets}"/>
+
+                  <!-- Resume tracking for the next target (Servo is IDLE
+                       after the release at the top of this branch). -->
+                  <ServoTakeover/>
+                </Sequence>
+
+                <Sequence name="absent">
+                  <IsArmCameraAlive max_age_ms="500"/>
+                  <!-- 2026-11-20: 恢复路径第一步必须是 ServoRelease。
+                       验证失败时伺服还在 TRACKING, 直接发 MoveGroup 会让它
+                       按设计让位 TRACKING -> HOLD (busy=1); 而 ServoTakeover
+                       只接受 IDLE (servo_takeover.cpp:282), HOLD 下接管被永久
+                       拒绝 -> 臂锁死在最后姿态。RELEASE 从 HOLD 是接受的。
+                       后面的 Delay 800: release 不会取消 HOLD 恢复那段
+                       bounded move(servo_session.cpp 注释), 立刻发 home 会和
+                       它抢 /move_action。 -->
+                  <ForceSuccess><ServoRelease/></ForceSuccess>
+                  <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+                  <!-- 2026-11-19 用户要求: 夹取判断失败(夹爪合上但没建立接触力)
+                       时夹爪是闭着的, 恢复必须先张开, 否则下一个目标带着闭合
+                       夹爪去接近。ForceSuccess: 开夹爪失败不该打断清理。 -->
+                  <ForceSuccess>
+                    <ControlGripper target_width="0.1"/>
+                  </ForceSuccess>
+                  <!-- 2026-11-19 真机: present 分支一失败, 臂会留在预抓取位
+                       (伸在外面) —— 既挡头部相机, 又带着伸出的臂走路。
+                       任何失败路径都必须先把臂收回 home 再收尾。
+                       ForceSuccess: move_group 偶发不可达不能把清理路径打断。 -->
+                  <ForceSuccess>
+                    <MoveArmToNamed named_target="home"
+                                    named_targets="{@named_targets}"/>
+                  </ForceSuccess>
+                  <!-- ForceSuccess: mark 被拒(轨迹已归档)不该把本支打成失败,
+                       否则会掉到 camera_dead 再清一次姿态。 -->
+                  <ForceSuccess>
+                    <MarkTrack track_id="{track_id}" action="2"/>
+                  </ForceSuccess>
+                  <SetBodyPose clear="true"/>
+                  <!-- 同上: 等姿态回正再发步态(2026-11-18)。 -->
+                  <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                  <SwitchGait gait_name="classic_walk" enable="true"/>
+                  <!-- 2026-11-19 真机: 恢复路径必须把伺服也交还回去。
+                       present 里释放过伺服, 失败后若不重新接管, 伺服会一直停在
+                       IDLE —— 下一个目标既没有 TRACKING, ComputeGraspPoses 拿到的
+                       "注视姿态"也变成 home 姿态, 位姿方向全错(MoveIt -27)。
+                       takeover 从 IDLE 发出后进入 SCANNING, 等新目标出现自动转
+                       TRACKING; 和 init 的收尾顺序一致(姿态→步态→接管)。
+                       ForceSuccess: 接管失败(伺服 FAULT)不该让清理支路失败
+                       进而连锁触发 camera_dead 再做一遍无用清理。 -->
+                  <ForceSuccess><ServoTakeover/></ForceSuccess>
+                </Sequence>
+
+                <!-- camera stream dead: do not claim absence, but never leave
+                     the dog leaning — restore the posture, then fail. -->
+                <Sequence name="camera_dead">
+                  <!-- 同上: 先释放伺服(可能在 TRACKING/HOLD), 再收臂
+                       (可能停在预抓取位), 再清姿态。 -->
+                  <ForceSuccess><ServoRelease/></ForceSuccess>
+                  <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+                  <ForceSuccess>
+                    <MoveArmToNamed named_target="home"
+                                    named_targets="{@named_targets}"/>
+                  </ForceSuccess>
+                  <SetBodyPose clear="true"/>
+                  <!-- 同上: 等姿态回正再发步态(2026-11-18)。 -->
+                  <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                  <SwitchGait gait_name="classic_walk" enable="true"/>
+                  <!-- 同上: 恢复路径统一"回 home + 重新接管伺服"。 -->
+                  <ForceSuccess><ServoTakeover/></ForceSuccess>
+                  <AlwaysFailure/>
+                </Sequence>
+              </Fallback>
+            </Sequence>
+
+            <!-- No fresh target: idle for this tick, continue the loop. -->
+            <AlwaysSuccess/>
+          </Fallback>
+
+          <!-- 回基地卸货 (2026-11-18 用户要求):
+               已采集样品数 > 0, 且狗回到基地圆心 0.25 m 以内时:
+               平衡站立 → 趴下 → 卸货子树(UnloadHandle) → 站起 → 平衡站立
+               → 重发经典步态 → 计数清零 → 重新接管 Servo。
+               卸货期间机械臂由 MoveIt 驱动, 所以先把 Servo 释放掉(否则会被
+               Servo 抢控制权); 结束后再接管去扫下一个目标。 -->
+          <Fallback name="unload_gate">
+            <Sequence name="unload_at_base">
+              <ScriptCondition code="samples > 0"/>
+              <IsWithinBaseRadius radius_m="0.25"/>
+              <ServoRelease/>
+              <BalanceStand/>
+              <StandDown/>
+              <SubTree ID="UnloadHandle"/>
+              <StandUp/>
+              <BalanceStand/>
+              <SwitchGait gait_name="classic_walk" enable="true"/>
+              <Script code="samples := 0"/>
+              <ServoTakeover/>
+            </Sequence>
+            <AlwaysSuccess/>
+          </Fallback>
+        </Sequence>
+      </Repeat>
+    </Sequence>
+  </BehaviorTree>
+</root>

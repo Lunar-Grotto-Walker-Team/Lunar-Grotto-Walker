@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  pick_and_place_demo.xml — pick-and-place demo BT 树
+
+  Sequence (7 步):
+    1. 打开夹爪                                  (MoveArmToNamed "gripper_open"  width=0.1)
+    2. 移到指定位姿 (复用 pose_via_set_pose_stamped.xml 2026-09-04 记录值)
+    3. 闭合夹爪                                  (MoveArmToNamed "gripper_close" width=0.0)
+    4. 回 home                                   (MoveArmToNamed "home")
+    5. 移到放置位姿: 指定位姿 + (0, 0, 0.20) m,姿态工具 z 垂直向下
+       (quaternion 绕 X 轴 180° → (1, 0, 0, 0))
+    6. 张开夹爪                                  (MoveArmToNamed "gripper_open"  width=0.1)
+    7. 回 home                                   (MoveArmToNamed "home")
+
+  夹爪改用 MoveArmToNamed 走 move_group -> gripper_controller 路径,
+  避免 ControlGripper 自定义 20Hz /control/joint_states 与 joint_state_broadcaster
+  (200Hz) + arm_controller + gripper_controller 在同一 topic 上多源 publisher
+  冲突。代价: 抓取动作退化为 SRDF 命名预设 (open=0.1, close=0.0), 失去自定义
+  target_width 能力; 真机闭合到 0.0 会顶到物体后停转, 物理抓取靠 gripper 自身
+  stall。
+
+  停止: BT.CPP v4 默认 Sequence SUCCESS 后保持 child 状态,后续 tickOnce()
+        不重置 SUCCESS 的 child,动作只跑一次。要重启须重启 bt_runner 或重置树。
+
+  Pose literal 格式 (SetPoseStamped):
+    frame_id;x;y;z;qx;qy;qz;qw
+
+  参考系: frame=world (== base_link, world→base_link fixed joint xyz=0 rpy=0)
+  tcp_offset: launch 内部 default [0.0, 0.0, 0.12, 0.0, 0.0, 0.0],
+             published tcp_pose / MoveArmToPose goal 都已含此偏置
+
+  用法:
+    启动 piper_bt_planner.launch.py 后,改 bt_xml 参数指向本文件,或编辑
+    bt_xml_default 把它作为默认。
+-->
+<root BTCPP_format="4" main_tree_to_execute="PickAndPlaceDemo">
+  <BehaviorTree ID="PickAndPlaceDemo">
+    <Sequence name="main">
+      <!-- 0. 阻塞: 操作员确认就绪后启动
+           ros2 topic pub - -once /bt_user_input std_msgs/Bool "data: true" -->
+      <!-- 2026-09-08 临时禁用:race fix debug 阶段,跑通自动 BT 链路
+      <WaitForUserInput name="wait_user_start" topic_name="/bt_user_input"/>
+      -->
+
+      <!-- 1. 打开夹爪 (走 move_group -> gripper_controller) -->
+      <MoveArmToNamed name="open_gripper_initial"
+                       named_target="gripper_open"
+                       named_targets="{@named_targets}"/>
+
+      <!-- 2. 移到指定位姿 (复用 2026-09-04 记录的 target_pose) -->
+      <SetPoseStamped name="set_target_pose"
+                       output_key="target_pose"
+                       value="world;0.4511195503291385;0.06328141277697896;-0.19545562992022758;0.09998419043197071;-0.9938841916095045;-0.044545981523223616;0.014595576813465743"/>
+      <MoveArmToPose name="move_to_target" goal="{target_pose}"/>
+
+      <!-- 3. 闭合夹爪 (抓取) -->
+      <MoveArmToNamed name="close_gripper_grasp"
+                       named_target="gripper_close"
+                       named_targets="{@named_targets}"/>
+
+      <!-- 4. 回 home -->
+      <MoveArmToNamed name="return_home_1" named_target="home" named_targets="{@named_targets}"/>
+
+      <!-- 4.5 阻塞: 等用户在终端确认
+           ros2 topic pub - -once /bt_user_input std_msgs/Bool "data: true" -->
+      <!-- 2026-09-08 临时禁用:race fix debug 阶段,跑通自动 BT 链路
+      <WaitForUserInput name="wait_user_continue" topic_name="/bt_user_input"/>
+      -->
+
+      <!-- 5. 移到放置位姿: 用当前 tcp_link 实测位姿 (2026-09-04 记录, 修正版)
+           position = (-0.0024, 0.3626, 0.0309) m in world
+           quat     = (0.6717, -0.7327, -0.1084, -0.0147)
+           注: 这是"当前位姿当作目标", 验证 OMPL goal-tree 在已知可达点能否
+           5s 内采样到 valid state; 如果仍 5s 超时, 则与目标姿态/位置无关,
+           进一步定位到 tolerance / 规划 pipeline 配置. -->
+      <SetPoseStamped name="set_place_pose"
+                       output_key="place_pose"
+                       value="world;-0.0023574615976963316;0.36261628579542243;0.030876998438977288;0.6716555020654124;-0.7327486333772223;-0.10835541801734049;-0.014745515093051118"/>
+      <MoveArmToPose name="move_to_place" goal="{place_pose}"/>
+
+      <!-- 6. 张开夹爪 (释放) -->
+      <MoveArmToNamed name="open_gripper_release"
+                       named_target="gripper_open"
+                       named_targets="{@named_targets}"/>
+
+      <!-- 7. 回 home -->
+      <MoveArmToNamed name="return_home_2" named_target="home" named_targets="{@named_targets}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

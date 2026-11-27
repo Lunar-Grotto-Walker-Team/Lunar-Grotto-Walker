@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  lookat_pose_isolated_test.xml — 隔离 test,不引入 YOLOE / cameras。
+  配套 script: scripts/start_lgw_lookat_pose_isolated_test.sh
+
+  目的:
+    ComputeLookatPose + MoveArmToPose 是否能解 hardcoded target_in_head_frame?
+    排除 head detection 链路,直接验证 lookat math + IK 主路径。
+
+  target_in_head_frame = "0.5;0.0;0.0"
+    head 相机光学系下:正前方 0.5 m,无左右偏移,无上下偏移。
+    这是中等距离的 in-FOV 目标,ee_position_world="0.2;0.0;0.3"
+    (arm 相机光学中心在 base_link 上方 0.3 m),ComputeLookatPose 会算出
+    P_target_base + lookat R + P_tcp + quat,MoveArmToPose 设 goal。
+
+  行为:
+    SUCCESS 序列:compute → move → return_home → 整树 SUCCESS
+    FAILURE (ompl unable to sample 等):compute 或 move FAIL → 整树 FAIL
+  -->
+<root BTCPP_format="4" main_tree_to_execute="LookatPoseIsolatedTest">
+  <BehaviorTree ID="LookatPoseIsolatedTest">
+    <Sequence name="main">
+      <ComputeLookatPose name="compute_lookat"
+        target_in_head_frame="0.0;0.0;0.5"
+        ee_position_world="0.3;0.0;0.3"
+        world_frame="world"
+        output_pose_key="lookat_pose"/>
+
+      <MoveArmToPose name="move_to_lookat" goal="{lookat_pose}"/>
+
+      <MoveArmToNamed name="back_home" named_target="home"
+        named_targets="{@named_targets}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

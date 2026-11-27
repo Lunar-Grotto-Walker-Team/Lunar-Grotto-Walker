@@ -1,0 +1,22 @@
+<root BTCPP_format="4" main_tree_to_execute="PoseViaSetPoseStamped">
+  <BehaviorTree ID="PoseViaSetPoseStamped">
+    <Sequence name="main">
+      <!-- SetPoseStamped parses the literal into a typed PoseStamped and writes
+           it to the blackboard, bypassing BT::convertFromString<PoseStamped>'s
+           .so boundary issue. frame=world (== base_link in this URDF: the
+           world_to_base_link fixed joint has xyz=0 rpy=0).
+
+           Value is the observation pose recorded at 2026-09-04 from
+           /feedback/tcp_pose (with tcp_offset=[0,0,0.12,...] applied). This
+           is the current physical end-effector pose recorded by sampling
+           /feedback/tcp_pose directly while the arm was at rest. -->
+      <SetPoseStamped output_key="target_pose"
+                      value="world;0.4511195503291385;0.06328141277697896;-0.19545562992022758;0.09998419043197071;-0.9938841916095045;-0.044545981523223616;0.014595576813465743"/>
+      <!-- MoveArmToPose reads the typed PoseStamped off the blackboard and
+           hands it to the /move_action goal with position/orientation
+           constraints. -->
+      <MoveArmToPose goal="{target_pose}"/>
+      <MoveArmToNamed name="to_home" named_target="home" named_targets="{@named_targets}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

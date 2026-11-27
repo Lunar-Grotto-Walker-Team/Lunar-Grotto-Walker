@@ -1,0 +1,36 @@
+<!--
+  track_collect_validation.xml — validation tree for the perception → servo →
+  collect chain (2026-11-17).  Navigation is MANUAL: the operator drives the
+  robot; the tree only declares "arrived" when the selected target's XoY
+  distance to the arm base falls within [min_xy_m, max_xy_m].
+
+  Flow:
+    wait for a selected target
+    -> servo takeover (follows selected_track_id)
+    -> operator drives until XoY <= 0.6 m
+    -> arm camera verifies: >= 3 hits in the 3 s window -> consume
+       otherwise: if the arm stream is alive -> ignore (absent)
+                  if the stream is dead -> FAIL (never claim absence blind)
+    -> release servo
+-->
+<root BTCPP_format="4" main_tree_to_execute="TrackCollectValidation">
+  <BehaviorTree ID="TrackCollectValidation">
+    <Sequence name="main">
+      <WaitForTargetSelected timeout_ms="60000" track_id="{track_id}"/>
+      <ServoTakeover/>
+      <WaitUntilTargetNear min_xy_m="0.0" max_xy_m="0.6" timeout_ms="120000"/>
+      <Fallback name="verify">
+        <Sequence name="verified">
+          <WaitForArmHits min_hits="3" timeout_ms="5000"/>
+          <MarkTrack track_id="{track_id}" action="1"/>
+        </Sequence>
+        <Sequence name="absent">
+          <IsArmCameraAlive max_age_ms="500"/>
+          <MarkTrack track_id="{track_id}" action="2"/>
+        </Sequence>
+        <AlwaysFailure/>
+      </Fallback>
+      <ServoRelease/>
+    </Sequence>
+  </BehaviorTree>
+</root>

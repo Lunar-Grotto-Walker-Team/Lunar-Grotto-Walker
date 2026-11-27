@@ -1,0 +1,25 @@
+# Takeover.srv
+# 接管 Servo:BT / 外部调用方向 servo 节点请求"接管并开始跟踪"。
+#
+# 调用方:BT 薄壳或人工调试
+# 服务方:servo 节点(/lgw/servo/takeover)
+#
+# 输入:
+#   track_id      DEPRECATED / ignored (2026-11-17). Servo follows
+#                 UnifiedTrackArray.selected_track_id; use
+#                 MarkTrack(action=4) to pick a target first.
+#   class_filter  DEPRECATED / ignored (same change).
+# 输出:
+#   success / message / state(接管后的 ServoState 名称)
+#
+# 见 docs/superpowers/specs/2026-10-26-lgw-servo-takeover-design.md §7.2。
+
+# ===== Request =====
+uint64 track_id
+string class_filter
+---
+
+# ===== Response =====
+bool success
+string message
+string state

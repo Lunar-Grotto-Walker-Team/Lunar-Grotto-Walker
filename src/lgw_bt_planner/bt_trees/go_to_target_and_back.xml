@@ -1,0 +1,8 @@
+<root BTCPP_format="4" main_tree_to_execute="GoToTargetAndBack">
+  <BehaviorTree ID="GoToTargetAndBack">
+    <Sequence name="main">
+      <MoveArmToNamed name="to_target" named_target="raised" named_targets="{@named_targets}"/>
+      <MoveArmToNamed name="to_home" named_target="home" named_targets="{@named_targets}"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

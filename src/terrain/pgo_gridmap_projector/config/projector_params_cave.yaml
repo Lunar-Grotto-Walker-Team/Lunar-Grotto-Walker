@@ -1,0 +1,236 @@
+# CAVE PROFILE: reference mode + profile=cave. Use with
+#   projector_params_file:=<share>/pgo_gridmap_projector/config/projector_params_cave.yaml
+# and the slope-colored RViz config (band-wide keeps the original one):
+#   rviz_config:=<em_share>/rviz2/go2_elevmap_fastlio_cave.rviz
+# pgo_gridmap_projector parameters.
+#
+# The projector is stateless: every frame of /aft_pgo_map is rasterized
+# into a fresh grid. There is no history to corrupt and nothing to clear,
+# so a restart costs at most one input period (1 s) of downtime.
+
+pgo_gridmap_projector:
+  ros__parameters:
+    # 2026-11-19 / 2026-11-27 restored: uLidar fill 的最长可接受年龄。
+    # 超过就整条丢弃, 而近场那些只有 fill 看得到的格子会立刻回到 UNKNOWN
+    # (站立 bag 实测: fill 年龄从 0.9 s 涨到 3.4 s 时, 0–0.8 m 的有效格
+    # 从 113 掉到 14/199)。fill 自己的滚动窗口是 5 s, 所以 5 s 是上限。
+    # 代码默认也是 5.0, 这里显式写出以免默认值变化时静默改变行为。
+    fill_max_age_s: 5.0
+
+    # ---- Topics ----
+    # /aft_pgo_map is the PGO-corrected full map, rebuilt every second by
+    # simple_loop_closure from all keyframes at the current optimized poses.
+    #
+    # Do NOT point this at /global_pgo_map: map_accumulator's voxel hash is
+    # first-write-wins and never cleared, so it keeps pre-correction points
+    # after a loop closure. See spec section 4.4.
+    input_topic: "/aft_pgo_map"
+
+    # Feeds elevation_fast_postprocessor, which republishes the processed map
+    # on /elevation_map_raw_post.
+    output_topic: "/elevation_map_raw"
+
+    # The projector does no TF lookup. It relabels the incoming frame
+    # (upstream publishes camera_init) to this frame. camera_init -> map is
+    # an identity static TF published by
+    # simple_loop_closure_ros2/launch/full_stack_simple_lc_mid360s.launch.py:145-160.
+    output_frame_id: "map"
+
+    # ---- Grid geometry ----
+    # 30 m x 30 m at 0.10 m = 300 x 300 = 90,000 cells, centred on the map
+    # origin, so the covered area is +/- 15 m.
+    #
+    # WHY 30 AND NOT 50. The filter chain is the only hop that cannot keep
+    # up: MeanInRadiusFilter + NormalVectorsFilter sweep every cell of the
+    # map on every frame, so cost scales with cell count, not with how often
+    # the upstream publishes. Measured end-to-end on the bag
+    # (testdata/livox_data_01, 32 s, all upstream nodes running):
+    #
+    #   50 m (250,000 cells): /elevation_map_raw_post at 0.31 Hz, 4.1 s stale
+    #   30 m ( 90,000 cells): 36% of the work -> should reach ~1 Hz
+    #
+    # At 50 m the chain sat saturated, so raising the upstream rate would
+    # only have grown the backlog, not the output rate.
+    # This also matches the 2026-10-07 tuning of the fastlio pipeline, which
+    # cut length 50 -> 30 for the same reason.
+    #
+    # Trade-off: anything beyond +/- 15 m is dropped (the points are clipped
+    # by the cell grid, not by the z gate). For near-field traversability
+    # that is the intended range; if a task needs a wider view, raise this
+    # only together with the filter radii (cost grows as length^2).
+    #
+    # origin_x / origin_y are the grid CENTRE, and they are load-bearing:
+    # grid_map's own getIndexFromPosition subtracts the grid centre, so the
+    # rasterizer's cell assignment and info.pose.position must use the same
+    # origin. Leave both at 0.0 unless the whole chain is moved together.
+    resolution: 0.10
+    length_x: 30.0
+    length_y: 30.0
+    origin_x: 0.0
+    origin_y: 0.0
+
+    # ---- Adaptive extent (spec 2026-11-04 section 6.2) ----
+    # The grid follows the bounding box of the observed points instead of a
+    # fixed 30 m square.  It only grows (unless extent_shrink), and its
+    # lower-left corner is snapped to the cell lattice so a world point does
+    # not jump between cells as the bbox changes.
+    #
+    # extent_max_length is a runaway guard, not the operating point: once the
+    # union reaches it the grid is capped and re-centred on the observed bbox
+    # (the map then follows the robot).  0.0 disables the cap (debug only).
+    #
+    # auto_extent: false restores the legacy fixed length_x/length_y above,
+    # which is what the A/B comparison against the old filter chain uses.
+    auto_extent: true
+    extent_margin: 2.0
+    extent_quantum: 1.0
+    extent_min_length: 10.0
+    extent_max_length: 120.0
+    # ---- Fixed robot-centred window (2026-11-14, restored 2026-11-27) ----
+    # 11-14 的定因: 长走廊的累积图会长到 100x100 m；下游 projector /
+    # postprocessor / bridge 都是 O(格数)，100 万格时 2 Hz 的链条会掉到
+    # 0.3-1 Hz。全局 costmap 本来只消费 60x60 m 的 rolling 视口，所以机器人
+    # 周围 70x70 m 足够覆盖它，而格数固定（70 m @ 0.1 = 49 万格）。
+    # window_quantum 把窗口中心吸附到整数米，避免格子随位姿每帧亚格抖动。
+    # 想回到自适应全图时把 window_centered_on_pose 设为 false（auto_extent
+    # 仍然生效，直到 120 m 的 runaway guard）。
+    #
+    # 2026-11-27: 该块在 11-20 工作区事故恢复时丢失，cave profile 退回 11-04
+    # 的自适应 30 m（cap 120 m）。同目录 projector_params.yaml 与
+    # projector_params_band.yaml 一直保留着 window 70，只有 cave 丢了。
+    #
+    # 2026-11-27 实测（cave_20261120_092710，100 s，308 关键帧）：window 70
+    # 时栅格 700x700=49 万格，projector 单帧 1.6 s，端到端
+    # /elevation_map_raw_post 只有 0.21-0.26 Hz；同 bag 在自适应 ~30 m
+    # （9 万格）下是 0.87 Hz。瓶颈是 O(格数) 的栅格化，与点数无关
+    # （33 万点 1.6 s，而 11-20 的 160 万点只要 1.1 s）。
+    # 洞穴单程在 30 m 量级，70 m 窗口纯属浪费，故 cave profile 单独取 30 m；
+    # 长走廊/带状场景（projector_params.yaml、_band.yaml）仍需 70 m。
+    window_centered_on_pose: true
+    window_length: 30.0
+    window_quantum: 1.0
+    extent_shrink: false
+    # 取 bbox 前每轴丢弃的极端样本数: 一个配准离群点就足以把网格拖到
+    # 公里外, 而真正的墙面由成千上万个点构成, 丢 1 个不影响。
+    extent_outlier_trim: 1
+
+    # ---- Aggregation ----
+    # median: most robust against noise and multi-view overlap; closest in
+    # spirit to elevation_mapping's weighted-mean fusion.
+    # Alternatives: mean, max, min.
+    z_aggregation: "median"
+
+    # ---- Height gate ----
+    # With follow_odom_height these two are OFFSETS around the robot's
+    # current LiDAR height (the z of /aft_pgo_odom), in the map frame.
+    #
+    # 2026-11-07: why the anchor moved.  Before, the band was fixed at the
+    # map origin, which is the pose at startup -- i.e. the LiDAR height at
+    # t = 0 (measured: the floor sits at map z = -0.39, matching
+    # body_to_base_z = 0.392 in ground_filter).  The band therefore only
+    # owned 0.11 m of margin below the floor, and as the LIO z drifted the
+    # floor slid out of it: /elevation_map_raw froze at 14,425 cells after
+    # ~143 s while the point cloud and the dog's route kept growing, so the
+    # global costmap stopped adding new walls.  Following the PGO pose z
+    # keeps the floor in the same place inside the band for the whole run.
+    #
+    # 0.5: drops the top half of a wall in narrow corridors (and the cave
+    #      ceiling, which sits ~1.1 m above the LiDAR at z_max = 1.5).
+    # -0.5: drops robot-leg / mounting-hardware returns.
+    follow_odom_height: true
+    odom_topic: "/aft_pgo_odom"
+    # A stale anchor is still far better than a hard fallback to z = 0, so
+    # the last value keeps being used and a WARN is logged once per 10 s.
+    odom_timeout_sec: 2.0
+    ignore_points_above: 0.5
+    # 2026-11-10: -0.5 -> -1.2.  Relative to the pose this is ground -0.81 m
+    # (the floor sits 0.392 m below the pose).  -0.5 only left 0.108 m of
+    # margin below the floor, so the floor dropped out of the band after a
+    # late loop closure (the map fell from ~29k to ~16k cells).  With the
+    # go2 z/attitude factors keeping the drift small, this wider lower edge
+    # keeps the floor in the band while the upper edge stays at ground+0.89.
+    ignore_points_below: -1.2
+
+    # ---- Ground mode ----
+    # band (default): the global gate above, with the widened lower edge.
+    #     Cheapest (measured ~20% CPU at 200k points, 0 slow frames) and,
+    #     with the upstream go2 z fix, no longer freezes on the corridor.
+    # reference: per-cell ground reference (spec 2026-11-07).  Use it for
+    #     low-ceiling caves via config/projector_params_cave.yaml
+    #     (ground_mode=reference, profile=cave); it is the structural
+    #     fallback if the PGO z drift grows again.
+    ground_mode: "reference"
+    # default | cave.  "cave" overrides seed_radius, ring_check_tol,
+    # ref_band_above, out_band_above and max_gap_cells (see ground.py).
+    # Only meaningful in reference mode.
+    profile: "cave"
+
+    # aft_mapped(body/IMU) -> base_footprint.  NOT the LiDAR optical centre
+    # (the LiDAR is another 0.044 m above the IMU); /aft_pgo_odom carries the
+    # body pose, so 0.392 is the right constant for it.
+    pose_to_ground_z: 0.392
+    # Fixed 5:1 with the 0.1 m output grid; a different value only logs a
+    # warning (the coarse cells must nest in the output lattice).
+    ref_resolution: 0.5
+
+    # Seed disc and its ground-like check.  The window is asymmetric: down to
+    # ref_band_below BELOW the pose seed (the vis cache lags), only
+    # seed_ground_tol ABOVE it.
+    seed_radius: 1.5
+    seed_ground_tol: 0.30
+    # Diagnostic only: seed cells with points this far above the seed.
+    clearance_min: 0.8
+
+    # Map ring check around the pose (1.2-3.0 m).
+    ring_inner: 1.2
+    ring_outer: 3.0
+    ring_check_tol: 0.15
+    ring_min_cells: 8
+    # Ring p50s farther apart than this are different surfaces (floor vs
+    # ceiling); the cluster nearest the pose seed wins.  Needed because a
+    # flat corridor ceiling is "groundlike" to the spread filter.
+    ring_cluster_gap: 0.40
+    # Skip only when even the nearest cluster is implausible.  The vis cache
+    # lags the pose by up to its 60 s rebuild interval (observed 0.3-0.7 m),
+    # so this is much wider than ring_check_tol; the ring value replaces the
+    # pose seed rather than rejecting the frame.
+    ring_reject_tol: 1.00
+    # The map floor may sit BELOW the pose seed (cache lag) but not
+    # significantly above the feet; a cluster above seed + this is a ceiling.
+    ring_above_tol: 0.30
+
+    # Flood band relative to the neighbour's reference.
+    ref_band_above: 0.30
+    ref_band_below: 0.60
+    min_points_ref: 3
+    max_gap_cells: 4
+    p_low: 20.0
+    # Off by default; the cave profile can enable it after bag A/B.
+    slope_exception_enabled: false
+    slope_except_above: 0.45
+    upright_spread_max: 0.25
+
+    # Output band relative to the per-cell reference.
+    # 2026-11-14 (restored 2026-11-27): 0.45 -> 1.00。狗带收起的机械臂约
+    # 0.8 m 高，0.5 m 的带宽会把 0.5~1.0 m 之间的光束全部丢掉；1.5 m 的
+    # 洞顶仍比 1.0 m 高出 0.5 m。11-20 恢复事故把它退回了 0.45。
+    out_band_above: 1.00
+    out_band_below: 0.40
+
+    # Coverage guard: skip the whole frame (keep the last map) when the
+    # accepted ground area collapses relative to the previous frame.
+    coverage_min_ratio: 0.60
+    coverage_min_cells: 200
+    # After this many consecutive rejections, accept the new (smaller)
+    # steady state.  Without it a genuine map shrink would freeze the output
+    # forever, because "previous" never moves.
+    coverage_max_skips: 3
+    # First-pass spikes: only cells with fewer than spike_min_support accepted
+    # points are replaced by their 3x3 neighbourhood median.  A wall base has
+    # many points, so this does not erase 1-cell-wide walls.
+    spike_filter_enabled: true
+    spike_min_support: 3
+    # Stronger sparse-cell mechanism: cells with fewer than this many accepted
+    # points inherit the flood-accepted 0.5 m reference ground instead of
+    # their noisy 0.1 m median.  Set 0 to disable it and A/B the 3x3 despike.
+    min_points_output: 3

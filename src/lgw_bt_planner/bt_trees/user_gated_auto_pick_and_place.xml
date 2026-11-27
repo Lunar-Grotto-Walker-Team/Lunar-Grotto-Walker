@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  user_gated_auto_pick_and_place.xml — ReactiveFallback 根,user 输入 fail
+  时机械臂自动循环 pick-and-place;user 发 /bt_user_input std_msgs/Bool
+  "data: true" 时整树 SUCCESS 退出(arm 立即 halt,RosActionNode 基类已做
+  async_cancel_goal)。
+
+  结构:
+    ReactiveFallback
+      Child 1: WaitForUserInput           (snapshot 式,SUCCESS / FAILURE)
+      Child 2: Repeat num_cycles="-1"
+                └ Sequence (pick_and_place_demo 7 步死坐标版)
+
+  行为对照 (10 Hz tick):
+    - 无 user msg: WaitForUserInput FAILURE + Repeat RUNNING → BT RUNNING,
+      Repeat 每次 Sequence SUCCESS 后自动重置,机械臂无限循环。
+    - user msg:    WaitForUserInput SUCCESS → ReactiveFallback 整树 SUCCESS,
+      Repeat halt → Sequence halt → MoveArmTo{ToPose,ToNamed} halt →
+      RosActionNode 基类已 async_cancel_goal → arm 停当前帧。
+    - 任一 arm 步失败 (IK 5s timeout / 碰撞 / path fail): Sequence FAILURE →
+      Repeat FAILURE → ReactiveFallback FAILURE (Child 1 也 FAILURE) → BT 终。
+
+  用法:
+    BT_XML=/my_ws/l4t/lg_walker_ws/src/lgw_bt_planner/bt_trees/user_gated_auto_pick_and_place.xml \
+      bash /home/unitree/my_ws/l4t/lg_walker_ws/scripts/start_lgw_pose_replay.sh
+    # 另一终端:
+    ros2 action send_goal /lgw_bt_execution btcpp_ros2_interfaces/action/ExecuteTree \
+      "{target_tree: UserGatedAutoPickAndPlace}"
+    # 不发 /bt_user_input,机械臂一直循环
+    # 想停(单次发布,one-shot flag):
+    ros2 topic pub once-flag /bt_user_input std_msgs/Bool "data: true"
+
+  把 tree_id 加到 launch 默认列表请编辑
+    src/lgw_bt_planner/launch/lgw_bt_planner.launch.py
+  中 'behavior_trees' 参数。自动发现:`bt_trees/*.xml` 全部会被
+  TreeExecutionServer 通过 `behavior_trees` param 加载到 factory。
+-->
+<root BTCPP_format="4" main_tree_to_execute="UserGatedAutoPickAndPlace">
+  <BehaviorTree ID="UserGatedAutoPickAndPlace">
+    <ReactiveFallback name="root">
+      <!-- 1. user msg snapshot: 无 → FAILURE(继续 Repeat);有 → SUCCESS(整树终)
+              RosTopicSubNode,topic_name 由 bt_plugin_registration.cpp 的
+              RosNodeParams(nh_shared, "/bt_user_input") 默认,XML 不写也行 -->
+      <WaitForUserInput name="wait_user_input"/>
+
+      <!-- 2. arm motion 无限循环,失败 -1 内置(bt_factory.cpp RepeatNode
+              providedPorts 注释:"Use -1 to create an infinite loop.")
+              Sequence 7 步跟 pick_and_place_demo.xml 一致(死坐标)。 -->
+      <Repeat name="auto_loop" num_cycles="-1">
+        <Sequence name="pick_and_place_cycle">
+          <!-- 1. 打开夹爪 -->
+          <MoveArmToNamed name="open_gripper_initial"
+                          named_target="gripper_open"
+                          named_targets="{@named_targets}"/>
+
+          <!-- 2. 移到指定位姿 (复用 2026-09-04 记录的 target_pose) -->
+          <SetPoseStamped name="set_target_pose"
+                          output_key="target_pose"
+                          value="world;0.4511195503291385;0.06328141277697896;-0.19545562992022758;0.09998419043197071;-0.9938841916095045;-0.044545981523223616;0.014595576813465743"/>
+          <MoveArmToPose name="move_to_target" goal="{target_pose}"/>
+
+          <!-- 3. 闭合夹爪 -->
+          <MoveArmToNamed name="close_gripper_grasp"
+                          named_target="gripper_close"
+                          named_targets="{@named_targets}"/>
+
+          <!-- 4. 回 home -->
+          <MoveArmToNamed name="return_home_1"
+                          named_target="home"
+                          named_targets="{@named_targets}"/>
+
+          <!-- 5. 移到放置位姿 (2026-09-04 记录的实测位姿) -->
+          <SetPoseStamped name="set_place_pose"
+                          output_key="place_pose"
+                          value="world;-0.0023574615976963316;0.36261628579542243;0.030876998438977288;0.6716555020654124;-0.7327486333772223;-0.10835541801734049;-0.014745515093051118"/>
+          <MoveArmToPose name="move_to_place" goal="{place_pose}"/>
+
+          <!-- 6. 张开夹爪 -->
+          <MoveArmToNamed name="open_gripper_release"
+                          named_target="gripper_open"
+                          named_targets="{@named_targets}"/>
+
+          <!-- 7. 回 home -->
+          <MoveArmToNamed name="return_home_2"
+                          named_target="home"
+                          named_targets="{@named_targets}"/>
+        </Sequence>
+      </Repeat>
+    </ReactiveFallback>
+  </BehaviorTree>
+</root>

@@ -1,0 +1,10 @@
+# planning_frame 下的绝对朝向（rad）
+float32 target_yaw
+# 0 = 用节点参数 default_yaw_tolerance
+float32 yaw_tolerance
+---
+bool success
+string reason
+float32 final_yaw_error
+---
+float32 angular_remaining

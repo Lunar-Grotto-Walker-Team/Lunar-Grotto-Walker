@@ -1,0 +1,469 @@
+一、当前识别架构
+当前流程已经不再使用：
+ObservationRequest
+ObservationCommand START
+mock_camera2_coordinator
+WAITING_CAMERA2_READY
+STAGE2_ACTIVE
+COOLDOWN
+现在的流程是：
+头部相机 RGB-D ──持续接收──独立结果话题
+                         ↘
+                          单GPU公平轮询推理
+                         ↗
+机械臂相机 RGB-D ─持续接收──独立结果话题
+两台相机同时接收图像，GPU依次处理最新帧。某一路相机异常时，节点跳过该相机，另一台继续识别。
+
+二、终端1：启动容器内两台 RealSense
+在宿主机进入容器：
+docker exec -it \
+  self_l4t \
+  bash
+此时提示符应为：
+root@ubuntu:/my_ws#
+配置环境：
+set +u
+export HEAD_CAMERA_SERIAL=_261622078621
+export ARM_CAMERA_SERIAL=_262422071246
+export ROS_DOMAIN_ID=0
+export ROS_LOCALHOST_ONLY=0
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+source /opt/ros/humble/setup.bash
+source \
+  /my_ws/l4t/ros2_ws/install/local_setup.bash
+source \
+  /opt/yoloe_transfer/humble_ws/install/local_setup.bash
+启动双相机：
+ros2 launch \
+  yoloe_humble_orchestration \
+  two_realsense.launch.py \
+  head_serial:="$HEAD_CAMERA_SERIAL" \
+  arm_serial:="$ARM_CAMERA_SERIAL"
+正常情况下应出现：
+[camera_head.camera_head]: Device Serial No: 261622078621
+[camera_arm.camera_arm]: Device Serial No: 262422071246
+[camera_head.camera_head]: RealSense Node Is Up!
+[camera_arm.camera_arm]: RealSense Node Is Up!
+这个终端保持运行。
+目前机械臂相机曾被识别为 USB 2.1。如果出现：
+Reduced performance is expected
+Depth stream start failure
+Hardware Error
+属于相机或USB链路问题，不是YOLOE模型错误。
+
+三、终端2：宿主机检查相机数据
+在宿主机执行：
+set +u
+set -a
+source \
+  "$HOME/yoloe_deploy/config/foxy_humble_dds.env"
+set +a
+source /opt/ros/foxy/setup.bash
+source \
+  "$HOME/yoloe_deploy/ros2_ws/install/local_setup.bash"
+确认两个相机节点：
+ros2 node list \
+  | grep -E \
+  '/camera_head/camera_head|/camera_arm/camera_arm'
+应看到：
+/camera_head/camera_head
+/camera_arm/camera_arm
+检查四个输入话题：
+ros2 topic info \
+  /camera_head/camera_head/color/image_raw
+ros2 topic info \
+  /camera_head/camera_head/aligned_depth_to_color/image_raw
+ros2 topic info \
+  /camera_arm/camera_arm/color/image_raw
+ros2 topic info \
+  /camera_arm/camera_arm/aligned_depth_to_color/image_raw
+每个话题都应至少显示：
+Publisher count: 1
+如果需要测频率：
+timeout 10s ros2 topic hz \
+  /camera_head/camera_head/color/image_raw
+timeout 10s ros2 topic hz \
+  /camera_arm/camera_arm/color/image_raw
+相机流正常后再启动YOLOE。
+
+四、确认 mock 没有运行
+当前版本不需要启动 mock。
+宿主机执行：
+docker exec self_l4t \
+  pgrep -af \
+  mock_camera2_coordinator
+正常情况应无输出。
+如果有输出，记录准确 PID，再执行：
+docker exec self_l4t \
+  kill -INT <实际PID>
+不要再执行旧版的：
+ros2 run \
+  yoloe_humble_orchestration \
+  mock_camera2_coordinator
+
+五、终端3：启动当前双相机YOLOE
+宿主机执行：
+set +u
+set -a
+source \
+  "$HOME/yoloe_deploy/config/foxy_humble_dds.env"
+set +a
+source /opt/ros/foxy/setup.bash
+source \
+  "$HOME/yoloe_deploy/ros2_ws/install/local_setup.bash"
+export \
+  LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1
+export PYTHONUNBUFFERED=1
+启动：
+ros2 launch \
+  yoloe_perception \
+  dual_camera_foxy.launch.py \
+  transfer_root:="$HOME/yoloe_deploy"
+模型首次预热约8～16秒，属于正常现象。
+预热后应看到：
+CONTINUOUS_DUAL_CAMERA_STARTED
+STREAM_RX stream=head_color
+STREAM_RX stream=head_depth
+STREAM_RX stream=arm_color
+STREAM_RX stream=arm_depth
+PAIR_READY camera=head
+PAIR_READY camera=arm
+CONTINUOUS_RESULT camera=head
+CONTINUOUS_RESULT camera=arm
+这个终端保持运行，不要在测试过程中按 Ctrl+C。
+
+六、当前主要节点名称
+功能	节点名称	所在环境
+头部RealSense	/camera_head/camera_head	Humble容器
+机械臂RealSense	/camera_arm/camera_arm	Humble容器
+双相机YOLOE	/perception/two_stage/yoloe_dual_camera_perception	Foxy宿主机
+
+检查：
+ros2 node list \
+  | grep -E \
+  'camera_head|camera_arm|yoloe_dual_camera'
+不再需要：
+mock_camera2_coordinator
+yoloe_two_stage_perception
+yoloe_stage2_input
+
+七、YOLOE输入话题
+头部相机输入
+/camera_head/camera_head/color/image_raw
+/camera_head/camera_head/aligned_depth_to_color/image_raw
+/camera_head/camera_head/color/camera_info
+用途：远距离和中距离候选目标识别。
+机械臂相机输入
+/camera_arm/camera_arm/color/image_raw
+/camera_arm/camera_arm/aligned_depth_to_color/image_raw
+/camera_arm/camera_arm/color/camera_info
+用途：机械臂抵近后的目标确认和三维定位。
+
+八、YOLOE主要输出话题
+1. 头部相机识别结果
+/perception/two_stage/camera_head/result
+类型：
+yoloe_interfaces/msg/ObservationResult
+2. 机械臂相机识别结果
+/perception/two_stage/camera_arm/result
+类型：
+yoloe_interfaces/msg/ObservationResult
+3. 头部识别可视化
+/perception/two_stage/stage1_overlay
+类型：
+sensor_msgs/msg/Image
+4. 机械臂识别可视化
+/perception/two_stage/stage2_overlay
+类型：
+sensor_msgs/msg/Image
+5. 机械臂相机目标点云
+/perception/two_stage/camera2_objects_cloud
+类型：
+sensor_msgs/msg/PointCloud2
+只有机械臂相机检测到符合条件的目标时才发布。
+6. 运行状态
+/perception/two_stage/state
+类型：
+std_msgs/msg/String
+主要启动状态示例：
+{
+  "event": "CONTINUOUS_DUAL_CAMERA_STARTED",
+  "mode": "continuous_dual_camera",
+  "next_camera": "head"
+}
+九、结果消息字段说明
+每个 ObservationResult 包含：
+header
+request_id
+status
+status_text
+image_width
+image_height
+detections[]
+当前版本中：
+request_id = 相机彩色图像时间戳的纳秒值
+它不再是旧版mock流程中的任务编号，不能用来要求head和arm结果的 request_id 相等。
+状态建议使用消息常量判断：
+ObservationResult.CONFIRMED
+ObservationResult.NO_TARGET
+ObservationResult.ERROR
+不要在机械臂代码中直接硬编码数字。
+每个 YoloeDetection3D 主要包含：
+class_id
+class_name
+confidence
+bbox
+position_valid
+center_m
+size_valid
+size_m
+volume_cm3
+valid_depth_points
+prompt_ids
+类别映射：
+class_id = 0  red_block
+class_id = 1  wood_block
+当前相关置信度均为：
+0.05
+十、坐标系说明
+center_m 是目标在对应相机光学坐标系中的三维中心：
+- head result 使用头部相机光学坐标系；
+- arm result 使用机械臂相机光学坐标系；
+- 具体名称读取 msg.header.frame_id。
+YOLOE节点：
+- 不移动机械臂；
+- 不进行手眼标定；
+- 不直接输出 base_link 下的抓取坐标。
+机械臂模块必须使用TF2和手眼标定，将：
+camera optical frame
+转换到：
+base_link
+后再生成抓取位姿。
+只有：
+detection.position_valid is True
+时，center_m 才能用于运动控制。
+十一、提供给机械臂同学的订阅规则
+当前感知虽然同时运行，但机械臂动作仍要保持先后安全关系。
+推荐逻辑：
+1. 订阅头部结果；
+2. 收到 CONFIRMED 后选择候选目标；
+3. 机械臂移动到观察位姿；
+4. 到位时记录当前ROS时间；
+5. 只接受到位之后产生的arm result；
+6. 要求 CONFIRMED、position_valid=True；
+7. 将arm相机坐标转换到 base_link；
+8. 生成预抓取、抓取和提升位姿。
+机械臂到位时记录：
+observation_ready_ns = (
+    node.get_clock().now().nanoseconds
+)
+收到arm结果后计算：
+result_stamp_ns = (
+    msg.header.stamp.sec * 1_000_000_000
+    + msg.header.stamp.nanosec
+)
+旧结果过滤：
+if result_stamp_ns <= observation_ready_ns:
+    return
+建议结果最大年龄先设为：
+2.5秒
+还应检查：
+msg.status == ObservationResult.CONFIRMED
+detection.position_valid
+detection.class_id == 目标类别
+重要区别：
+- 收到 NO_TARGET：相机正常完成了一次推理，但没有合格目标；
+- 长时间完全没有消息：相机流可能异常；
+- 日志出现 CAMERA_CYCLE_SKIPPED：相机缺少RGB、深度或有效配对。
+机械臂程序不能把“没有消息”当成“没有目标”。
+
+十二、终端4：新版监控程序
+宿主机加载环境：
+set +u
+set -a
+source \
+  "$HOME/yoloe_deploy/config/foxy_humble_dds.env"
+set +a
+source /opt/ros/foxy/setup.bash
+source \
+  "$HOME/yoloe_deploy/ros2_ws/install/local_setup.bash"
+运行：
+python3 - <<'PY'
+import rclpy
+
+from rclpy.node import Node
+from std_msgs.msg import String
+from yoloe_interfaces.msg import ObservationResult
+
+
+class DualCameraMonitor(Node):
+    def __init__(self):
+        super().__init__(
+            "yoloe_dual_camera_monitor"
+        )
+
+        self.subscriptions = [
+            self.create_subscription(
+                String,
+                "/perception/two_stage/state",
+                self.on_state,
+                10,
+            ),
+            self.create_subscription(
+                ObservationResult,
+                (
+                    "/perception/two_stage/"
+                    "camera_head/result"
+                ),
+                self.on_head,
+                10,
+            ),
+            self.create_subscription(
+                ObservationResult,
+                (
+                    "/perception/two_stage/"
+                    "camera_arm/result"
+                ),
+                self.on_arm,
+                10,
+            ),
+        ]
+
+        print(
+            "双相机YOLOE监控已启动",
+            flush=True,
+        )
+
+    def status_name(self, status):
+        names = {
+            ObservationResult.CONFIRMED:
+                "CONFIRMED",
+            ObservationResult.NO_TARGET:
+                "NO_TARGET",
+            ObservationResult.ERROR:
+                "ERROR",
+        }
+        return names.get(
+            int(status),
+            str(status),
+        )
+
+    def on_state(self, msg):
+        print(
+            "[STATE]",
+            msg.data,
+            flush=True,
+        )
+
+    def on_head(self, msg):
+        self.print_result(
+            "HEAD",
+            msg,
+        )
+
+    def on_arm(self, msg):
+        self.print_result(
+            "ARM",
+            msg,
+        )
+
+    def print_result(self, camera, msg):
+        stamp_ns = (
+            int(msg.header.stamp.sec)
+            * 1_000_000_000
+            + int(msg.header.stamp.nanosec)
+        )
+        now_ns = (
+            self.get_clock()
+            .now()
+            .nanoseconds
+        )
+        age_sec = (
+            (now_ns - stamp_ns) / 1e9
+            if stamp_ns > 0
+            else float("nan")
+        )
+
+        print(
+            "[{}]".format(camera),
+            "status =",
+            self.status_name(msg.status),
+            "text =",
+            msg.status_text,
+            "frame =",
+            msg.header.frame_id,
+            "age = {:.3f}s".format(
+                age_sec,
+            ),
+            "image = {}x{}".format(
+                msg.image_width,
+                msg.image_height,
+            ),
+            "detections =",
+            len(msg.detections),
+            flush=True,
+        )
+
+        for detection in msg.detections:
+            print(
+                "  - class_id =",
+                detection.class_id,
+                "class_name =",
+                detection.class_name,
+                "confidence =",
+                round(
+                    detection.confidence,
+                    4,
+                ),
+                "position_valid =",
+                detection.position_valid,
+                "center_m = "
+                "({:.3f}, {:.3f}, {:.3f})".format(
+                    detection.center_m.x,
+                    detection.center_m.y,
+                    detection.center_m.z,
+                ),
+                "size_m = "
+                "({:.3f}, {:.3f}, {:.3f})".format(
+                    detection.size_m.x,
+                    detection.size_m.y,
+                    detection.size_m.z,
+                ),
+                flush=True,
+            )
+
+
+rclpy.init()
+node = DualCameraMonitor()
+
+try:
+    rclpy.spin(node)
+except KeyboardInterrupt:
+    pass
+finally:
+    node.destroy_node()
+    rclpy.shutdown()
+PY
+十三、结果频率检查
+必须保持YOLOE启动终端继续运行，然后在另一个终端执行：
+timeout 30s ros2 topic hz \
+  /perception/two_stage/camera_head/result
+timeout 30s ros2 topic hz \
+  /perception/two_stage/camera_arm/result
+当前PT后端下，两台相机都正常时，每路预计约：
+0.4～0.5 Hz
+单次核心推理约：
+0.29～0.44秒
+两台相机完成一轮约：
+2.1～2.2秒
+若其中一台相机故障，健康相机可能以更高频率继续输出。
+十四、关闭顺序
+先在宿主机YOLOE终端按：
+Ctrl+C
+确认节点消失：
+ros2 node list \
+  | grep \
+  yoloe_dual_camera
+然后再到容器相机终端按：
+Ctrl+C
+当前版本无需启动或关闭 mock。

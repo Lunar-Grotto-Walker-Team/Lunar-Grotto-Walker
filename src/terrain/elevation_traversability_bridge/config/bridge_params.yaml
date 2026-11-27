@@ -1,0 +1,129 @@
+# elevation_traversability_bridge parameters.
+#
+# Loaded by launch/bridge.launch.py and forwarded to the
+# terrain_traversability_bridge Node as ros__parameters.
+#
+# Thresholds follow Task 2's ThresholdConfig defaults and are tunable per
+# deployment (e.g. loosen for outdoor grass, tighten for indoor tile).
+
+terrain_traversability_bridge:
+  ros__parameters:
+    # Topics
+    #
+    # input_topic MUST be elevation_mapping's post-processed map:
+    #   /elevation_map          = 融合图, 只有 elevation / upper_bound /
+    #                             lower_bound / color / uncertainty_range
+    #                             -> 没有 slope / roughness
+    #   /elevation_map_raw_post = raw 图 + 后处理滤波链产物, 含
+    #                             elevation_inpainted / elevation_smooth /
+    #                             normal_vectors_x|y|z / slope / roughness
+    #                             -> 地形分析层在这里
+    # 指错会导致每帧都 "missing required layer 'slope'" 而永不发布。
+    input_topic: /elevation_map_raw_post
+    output_topic: /terrain_traversability
+
+    # Frame lock-step: every incoming GridMap must declare this frame_id.
+    # Mismatch -> FATAL log + sys.exit(2), so launch / systemd restart
+    # surfaces the misconfiguration instead of silently bridging a
+    # bad-TF-tree costmap.
+    required_frame_id: map
+
+    # Target occupancy_grid cell pitch in meters. The elevation_mapping
+    # source publishes 0.10 m GridMap.
+    #
+    # 2026-10-23: 0.05 -> 0.10。0.05 只是把每个源 cell 用 np.kron 复制成
+    # 2x2，不产生任何真实细节，却让 /terrain_traversability 变成 1000x1000、
+    # 每帧(2Hz)传 100 万个 cell。0.10 = 1:1 直出 500x500，带宽/转换 CPU 降 4 倍。
+    # 注意: compute_upsample_factor 要求 n = source_res / target_res 必须是
+    # 整数，所以这里只能取 0.10 / 0.05 / 0.025...；填 0.08 会因 1.25 不是
+    # 整数而每帧抛 ValueError（节点不发布）。
+    target_resolution: 0.10
+
+    # ---- Flat-terrain profile (2026-11-19) --------------------------------
+    # The site is flat ground with a rough but drivable surface, and one steep
+    # but drivable ramp down into the cave.  Real obstacles are height
+    # discontinuities, not slopes, so:
+    #   * slope no longer decides anything lethal.  It is kept only as a
+    #     near-vertical hint (soft at 60 deg), lethal effectively disabled at
+    #     89 deg -- walls are caught by the height test below instead.  A
+    #     40-50 deg ramp must stay FREE, so anything near 40 would break the
+    #     cave entrance.
+    #   * roughness is only a "bumpy" cost hint.  Rough ground reads 5-15 cm
+    #     on |elev - 3x3 mean|; 0.05/0.20 used to turn it lethal.
+    #   * height above local ground is the PRIMARY test (see below).
+    slope_soft_upper_deg: 60.0
+    slope_lethal_upper_deg: 89.0
+
+    roughness_soft_upper_m: 0.12
+    roughness_lethal_upper_m: 0.35
+
+    # ---- Height above local ground: the PRIMARY obstacle test -------------
+    # dh = elevation - min(elevation over the (2k+1)^2 window below the cell).
+    #
+    # Go2 measured limits: 15 cm steps are the largest it crosses cleanly;
+    # 20 cm can be forced, but the foot slip/jitter corrupts mapping.  So:
+    #   dh <= 0.15 m        -> FREE   (rough surface, 10-15 cm bumps)
+    #   0.15 < dh < 0.20 m  -> SOFT   (crossable, but make the planner avoid)
+    #   dh >= 0.20 m        -> LETHAL (rock, step, kerb, wall base)
+    #
+    # height_window_cells 2 (5x5 = 0.5 m) is what the steep cave ramp would
+    # break on: a 22 deg slope spans 0.20 m across 0.5 m, so the whole ramp
+    # would read as a step.  1 (3x3 = 0.3 m) spans only 0.141 m at 45 deg,
+    # so the ramp stays free while a 20 cm obstacle still reads 0.20 m.
+    #
+    # height_min_neighbors drops single-cell noise: a raised cell needs at
+    # least this many raised cells in its 3x3 neighbourhood (itself included).
+    # 0 disables either band.
+    height_soft_m: 0.15
+    height_lethal_m: 0.20
+    height_window_cells: 1
+    height_min_neighbors: 2
+
+    # Small-cluster cleanup (2026-10-31).
+    # 均值粗糙度 |elev_inp - elev_smooth| 会在竖直结构（门框立柱、洞壁）脚下
+    # 把相邻的平地格拉出 >0.15 m 的差值，产生 1-3 格的孤立 lethal。
+    # 只对 <= small_cluster_max_cells 的 lethal 簇生效：
+    #   自身高程比 3x3 局部最低点高出 >= small_cluster_min_height_m
+    #   （细柱、石块、台阶 —— 有高度证据，保留）
+    #   或坡度 > small_cluster_min_slope_deg（近似竖直，保留）
+    # 否则降为 free。0 = 关闭清理（旧行为）。
+    # 2026-11-19: 0.15 -> 0.20, 与 height_lethal_m 对齐。15 cm 的孤立凸起
+    # 本来就是狗能直接过的，不需要保留成 lethal；保留的是 >=0.20 m 的
+    # 细柱/石块/台阶。
+    small_cluster_max_cells: 3
+    small_cluster_min_height_m: 0.20
+    small_cluster_min_slope_deg: 60.0
+
+    # Clearance (2026-11-14). 只有投影器开了 publish_clearance 时源 GridMap
+    # 才带 "clearance" 层（该格局部地面到最低上方遮挡物的高度，NaN=头顶无物）。
+    # 有限值且 < 该阈值的格直接标 254：狗带收起的机械臂约 0.8 m 高，
+    # 1.0 m 是它能通过的最小拱洞净空。地形坡度/粗糙度看不到头顶，这是
+    # 唯一能表达"低矮拱洞/桌下"的通道。0 = 关闭该检查。
+    # 1.0 是暂定值：尚无 1.5 m 拱洞真机/bag 数据，有数据后再实测调整。
+    #
+    # 2026-11-19: 本部署不做低洞穴探索, 洞内没有低矮拱洞, 该检查关闭。
+    # 显式写 0 而不是依赖 projector 的 publish_clearance=false: projector
+    # 若改用 cave profile 打开 clearance 层, 这里不会突然把正常格打成墙。
+    clearance_threshold_m: 0.0
+    # Trail free-prior (2026-11-17).
+    # 狗自己走过的格子是硬证据：走过的格不可能有障碍。这里把所有 lethal
+    # 规则之后、发布之前，把轨迹 ≤ trail_half_width_m 范围内的格强制置 0。
+    #
+    # 针对的故障：上游漂移/回环出错时，/aft_pgo_map 里同一面墙会出现两份，
+    # 狗原路返回时自己刚走过的走廊被判死，全局代价地图全红，实机上直接困死。
+    # 这种格 **有** 点，所以 L2 补地面（只写空格）和实时传感器都救不了；
+    # 唯一双方都同意的事实是"我已经从这里开过来了"。
+    #
+    # UNKNOWN(85) 的格不动 —— "我走过这里"不能说明没观测过的格。
+    # trail_half_width_m: 0.25 是按 robot_radius 0.20 取的：狗身半径之内
+    #   一定是它真的压过的空间，再宽就开始清它旁边擦过的真墙了。
+    # trail_window_s: 必须覆盖**整趟出行**。回程时前方那段是去程走的，
+    #   窗口只有 180 s 时它已被剪掉，于是只能等狗走到才清 —— 实测就是这样
+    #   （2026-11-17 corridor 回放：清掉的格子数从 0 涨到 744，但都在狗身后）。
+    #   1800 s + 5 cm 间距 ≈ 1.4 万个点，成本可忽略。0 = 关闭整个功能。
+    trail_clear_enabled: true
+    trail_half_width_m: 0.25
+    trail_window_s: 1800.0
+    trail_min_spacing_m: 0.05
+    pose_topic: "/aft_pgo_odom"
+    pose_timeout_s: 2.0

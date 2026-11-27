@@ -1,0 +1,72 @@
+# Parameters for the uLidar near-field terrain fill.
+#
+# The cloud is /utlidar/cloud_deskewed (already in odom).  Do NOT apply the
+# uLidar mounting extrinsic again; map<-odom is the only transform used.
+
+utlidar_terrain_fill:
+  ros__parameters:
+    input_topic: /utlidar/cloud_deskewed
+    pose_topic: /utlidar/robot_pose
+    output_topic: /utlidar_terrain_fill
+    target_frame: map
+    source_frame: odom
+
+    window_s: 5.0
+    voxel_leaf: 0.10
+
+    # Ground estimate.  0.25 m cells keep a 30 deg slope trusted
+    # (p80-p20 ~= 0.14 m) while rejecting wall/leg cells (spread > 0.20 m).
+    ground_cell: 0.25
+    ground_grid_size: 12.0
+    ground_percentile: 20.0
+    ground_min_points: 3
+    ground_spread_max: 0.20
+    ground_fill_iterations: 4
+    ground_h_min: -0.10
+    ground_h_max: 0.15
+
+    # 3.0 -> 1.5 on 2026-11-17.  Measured on bags/corridor_20261117_063954
+    # (static corner, raw /utlidar/cloud): the uLidar's returns have range
+    # p50 0.36 m / p95 1.46 m, and 90% of them are inside 1.5 m.  Beyond that
+    # the Livox owns the scene anyway, so a 3 m fill radius only adds points
+    # the Livox already has (they would be dropped as "cell occupied").
+    max_range_m: 1.5
+    # 2026-11-19: 发布"地面面片"而不是原始回波。回波约 1 点/0.1 m 格,
+    # 而 elevation 网格的 1 个 0.1 m 格没有点就是 UNKNOWN: 站立 corner bag
+    # 实测 0–0.8 m 的 ~200 格里只有 103–201 个有值(一半是未知)。地面栅格
+    # 本身是逐格估计, 可以按 dense_spacing 铺点, 覆盖率直接到 ~100%。
+    # 被 spread_max 判为墙/腿的格子不铺(它们从邻居借地面, 铺了会把障碍抹平)。
+    dense_output: true
+    # 0 = 用 voxel_leaf(0.10), 即与 projector 的 0.1 m 输出格对齐。
+    dense_spacing: 0.0
+    # Phase 0b (2026-11-07 static corner bag) measured a +50.6 mm uLidar
+    # ground bias, which led to -0.05.  The 2026-11-07 corridor bag (walking,
+    # A+B without C) showed the fill then sits ~20 mm BELOW the global Livox
+    # floor: the dynamic bias is about +29 mm, so the walking optimum is
+    # ~-0.03.  Keep -0.03 as the compromise; re-check after a gait change.
+    z_offset_m: -0.03
+
+    # Clear the rolling cache when map->odom jumps (loop closure/odom reset).
+    pose_jump_trans_m: 0.5
+    pose_jump_rot_rad: 0.3
+
+    publish_rate_hz: 1.0
+    # Per-scan TF lookup.  Keep 0: a positive timeout at cloud rate would
+    # wait for an absent C TF and eat the sensor period.
+    tf_timeout_s: 0.0
+
+    # Internal map->odom fallback when Terminal C (map_odom_correction) is
+    # not running.  Preferred path is still the map<-odom TF; this is only
+    # used on TF failure.  Values mirror pointlio_frames.yaml + driver.cpp.
+    pgo_odom_topic: /aft_pgo_odom
+    body_height_topic: /lf/sportmodestate
+    body_to_base_x: 0.187793
+    body_to_base_y: 0.02329
+    body_to_base_z: 0.391836
+    body_to_base_roll: 0.0
+    body_to_base_pitch: 0.2269
+    body_to_base_yaw: 0.0
+    utlidar_x_offset: 0.28945
+    # driver.cpp: body_height_ = sportmodestate.body_height + 0.057 - 0.046825
+    body_height_bias: 0.010175
+    fallback_timeout_s: 2.0

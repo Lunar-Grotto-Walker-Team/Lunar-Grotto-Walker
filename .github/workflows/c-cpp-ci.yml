@@ -6,31 +6,39 @@ on:
   pull_request:
     branches: [main, develop]
 
+# 为什么这里不编译：
+#   本仓库的 ROS2 包依赖 Jetson 侧才有的 vendor 包（unitree_go、livox_ros_driver2），
+#   GitHub 托管 runner 上装不出来；真正的 colcon build 在 Jetson 上跑。
+#   所以 CI 只做"结构 + 配置"校验，守住提交完整性与 YAML 可解析性。
+#
+# 什么时候该加编译 job：
+#   等团队推出一个自带上述依赖的自定义镜像后，取消下面注释并替换 image 即可。
+#
+#   build:
+#     runs-on: ubuntu-latest
+#     container: ghcr.io/<org>/lunar-grotto-ros:humble
+#     steps:
+#       - uses: actions/checkout@v4
+#       - run: |
+#           source /opt/ros/humble/setup.bash
+#           colcon build --symlink-install --parallel-workers 4
+
 jobs:
-  build-and-test:
+  validate:
+    name: Package validation
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential gcc g++ clang-tidy googletest libgtest-dev
+        run: pip install pyyaml
 
-      - name: Build
-        run: |
-          mkdir -p build
-          cd build
-          cmake ..
-          make
-
-      - name: Run static analysis
-        run: |
-          find . \( -name "*.cpp" -o -name "*.h" \) | xargs clang-tidy
-
-      - name: Run unit tests
-        run: |
-          cd build
-          ./tests/run_tests
+      - name: Validate packages and configs
+        run: python tools/ci/validate_repo.py

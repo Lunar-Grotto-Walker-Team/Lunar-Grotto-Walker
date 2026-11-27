@@ -1,0 +1,49 @@
+# 把 YOLOE 的检测结果从 domain 7(lo) 桥到 domain 0(eth10),供伺服 / tracker / BT 使用。
+#
+# overlay(图像) 和 camera2_objects_cloud(点云) 一律不桥 —— 那是 lo 存在的
+# 意义所在,让它们留在 domain 7。
+#
+# /tf_static 必须桥(2026-11-16 实测):
+#   trackers 的 broadcast_camera_mount_tf 要先 lookup
+#   camera_X_link → camera_X_color_optical_frame,这两个是 **realsense 自己发的
+#   静态 TF**。相机搬到 domain 7 后,domain 0 查不到 → 相机挂载 TF 永远发不出来
+#   → adapt() 返回空 → tracker 一个 track 都不出(现象:tracks: [] 但检测正常)。
+#
+# QoS 都显式写死,不依赖 domain_bridge 的自动推断(推断不准会静默不连接):
+#   三条 result/state = RELIABLE / KEEP_LAST(10) / VOLATILE
+#   /tf_static       = RELIABLE / KEEP_LAST(100) / TRANSIENT_LOCAL
+#
+# 启动方式见 scripts/start_lgw_perception_bridge.sh
+
+name: lgw_perception_bridge
+from_domain: 7
+to_domain: 0
+
+topics:
+  perception/two_stage/camera_head/result:
+    type: yoloe_interfaces/msg/ObservationResult
+    qos:
+      reliability: reliable
+      depth: 10
+
+  perception/two_stage/camera_arm/result:
+    type: yoloe_interfaces/msg/ObservationResult
+    qos:
+      reliability: reliable
+      depth: 10
+
+  perception/two_stage/state:
+    type: std_msgs/msg/String
+    qos:
+      reliability: reliable
+      depth: 10
+
+  # realsense 的内部静态链(camera_X_link → camera_X_color_optical_frame)。
+  # tracker 靠它把相机接到机器人 TF 树上,不桥的话一个 track 都出不来。
+  tf_static:
+    type: tf2_msgs/msg/TFMessage
+    qos:
+      reliability: reliable
+      durability: transient_local
+      history: keep_last
+      depth: 100
