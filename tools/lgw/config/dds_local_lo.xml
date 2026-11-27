@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  只给 cameras(容器内) + YOLOE(宿主) 使用的 CycloneDDS 配置。
+
+  目的:这两个进程之间全是几 MB 的大帧,走 lo + 大分片比走 eth10 高效得多
+  (一帧 1280x720 RGB8 的分片数从 ~2060 降到 ~46)。domain 0 上的其它进程
+  (Go2 / Servo / MoveIt / BT / nav) 完全不受影响,它们仍然走 eth10。
+
+  用法:
+    CYCLONEDDS_URI_YOLOE=/home/unitree/my_ws/l4t/lg_walker_ws/config/dds_local_lo.xml \
+    ROS_DOMAIN_ID_YOLOE=7 bash scripts/start_lgw_yoloe.sh
+
+  两个前提由 start_lgw_yoloe.sh 在启用本文件时自动设置(都是运行时设置,
+  重启会丢,脚本每次启动都会重新设):
+    1. lo 默认没有 MULTICAST 标志 —— 不打开的话 CycloneDDS 会退化到随机端口,
+       单播发现对不上:
+         ip link set lo multicast on
+    2. SocketSendBufferSize 的 max 不能超过 net.core.wmem_max(默认仅 208 KB):
+         sysctl -w net.core.wmem_max=67108864
+
+  只写 max、不写 min:CycloneDDS 会无条件请求 max,内核能砍多少就砍多少,
+  拿不到也不会报错。若写了 min(例如 1MB)而 net.core.wmem_max 没被抬高
+  (默认仅 208 KB,重启后必然如此),participant 会直接创建失败:
+    failed to increase socket send buffer size to at least 1048576 bytes
+    rmw_create_node: failed to create domain, error Error
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain>
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" priority="default" multicast="default"/>
+      </Interfaces>
+      <FragmentSize>60000B</FragmentSize>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Internal>
+      <SocketReceiveBufferSize max="16MB"/>
+      <SocketSendBufferSize max="16MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>

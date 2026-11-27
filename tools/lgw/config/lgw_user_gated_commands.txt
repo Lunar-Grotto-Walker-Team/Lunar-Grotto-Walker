@@ -1,0 +1,14 @@
+# UserGatedAutoPickAndPlace 测试指令
+# 配套 scripts/start_lgw_user_gated_auto_loop.sh 使用
+# 复制下面整行到 host 终端执行(每个命令都是一行,可直接粘贴)
+# 注意:docker exec 必须在容器内 source l4t_setup.sh,并显式 export LGW_INSTALL
+# 指向 fork install(否则 ros2 走默认 fastrtps,且 action/topic 解析不到 fork 的
+# pkg 与 BT XML)
+
+# 1) 触发 BT 执行(BehaviorTree 名="UserGatedAutoPickAndPlace")
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash -it self_l4t bash -lc 'source /my_ws/l4t/l4t_setup.sh && ros2 action send_goal /lgw_bt_execution btcpp_ros2_interfaces/action/ExecuteTree "{target_tree: UserGatedAutoPickAndPlace}" --feedback'
+
+# 2) 停止循环(不终止 launch):发 user msg → ReactiveFallback SUCCESS
+#    期望:WaitForUserInput SUCCESS → 整树 SUCCESS → Repeat halt
+#    → MoveArmTo{ToPose,ToNamed} halt(RosActionNode 基类已 async_cancel_goal)
+docker exec -e LGW_INSTALL=/my_ws/l4t/lg_walker_ws/install/setup.bash -it self_l4t bash -lc 'source /my_ws/l4t/l4t_setup.sh && ros2 topic pub --once /bt_user_input std_msgs/Bool "data: true"'

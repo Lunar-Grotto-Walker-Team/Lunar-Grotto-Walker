@@ -1,0 +1,445 @@
+================================================================================
+  test_yoloe_stability.sh 监控命令清单
+================================================================================
+
+使用方式: 在跑 test_yoloe_stability.sh 的 **另一个 host Foxy 终端** 中运行。
+执行前先 source Foxy 环境:
+
+    set -a
+    source ~/yoloe_deploy/config/foxy_humble_dds.env
+    set +a
+    source /opt/ros/foxy/setup.bash
+    source ~/yoloe_deploy/ros2_ws/install/local_setup.bash
+
+--------------------------------------------------------------------------------
+[1] YOLOE 推理日志 (host Foxy 端)
+--------------------------------------------------------------------------------
+
+    tail -f /tmp/test_yoloe_stability_yoloe.log
+
+关键行(grep -E 过滤):
+
+    tail -f /tmp/test_yoloe_stability_yoloe.log | \
+      grep -E 'CONTINUOUS_DUAL_CAMERA_STARTED|MODEL_WARMUP|CONTINUOUS_RESULT|PAIR_READY|STREAM_WATCHDOG|CONTINUOUS_ERROR'
+
+含义:
+    CONTINUOUS_DUAL_CAMERA_STARTED   YOLOE 节点就绪、模型加载完成(Phase 1.5 等这个)
+    MODEL_WARMUP_BEGIN/_STAGE1_DONE/_STAGE2_DONE/_END    模型预热进度
+    PAIR_READY camera=head|arm count=N delta=X.XXXs     同步帧配对成功
+    CONTINUOUS_RESULT camera=head|arm result_id=R raw=A accepted=B  推理结果
+    STREAM_WATCHDOG_ENABLED / STREAM_WATCHDOG_REBUILD   看门狗状态 / 触发重建
+    CONTINUOUS_ERROR camera=... error=...                pipeline 异常
+
+--------------------------------------------------------------------------------
+[2] 相机 driver 日志 (容器内 realsense2_camera_node)
+--------------------------------------------------------------------------------
+
+    docker exec self_l4t tail -f /tmp/two_realsense_inside.log
+
+容器内 USB / sensor 协商的输出。注意 "realsense2_camera_node" 启动顺序、profile 协商、
+stream up/down 事件都从这里出。
+
+--------------------------------------------------------------------------------
+[2.5] 实际分辨率 & 模型推理大小校验
+--------------------------------------------------------------------------------
+
+# (a) 相机 stream 实际分辨率(从 realsense 启动 log 一次性扫两路)
+docker exec self_l4t grep -E 'Stream:' /tmp/two_realsense_inside.log | head -10
+# 期望(当前容器 install copy 默认):
+#   Stream: 1280x720 (YUYV/RGB8) @ 15fps
+#   Stream: 848x480  (Z16)       @ 15fps
+
+# (b) 直接读当前 image msg 的 width/height 字段(运行中实时确认)
+ros2 topic echo /camera_head/camera_head/color/image_raw \
+  --field width --field height --once
+ros2 topic echo /camera_head/camera_head/aligned_depth_to_color/image_raw \
+  --field width --field height --once
+ros2 topic echo /camera_arm/camera_arm/color/image_raw \
+  --field width --field height --once
+ros2 topic echo /camera_arm/camera_arm/aligned_depth_to_color/image_raw \
+  --field width --field height --once
+
+# (b.alt) 通过 realsense2_camera 节点参数反查
+ros2 param get /camera_head/camera_head rgb_camera.color_profile
+ros2 param get /camera_arm/camera_arm  rgb_camera.color_profile
+ros2 param get /camera_head/camera_head depth_module.depth_profile
+ros2 param get /camera_arm/camera_arm  depth_module.depth_profile
+
+# (c) YOLOE 推理 warmup tensor / imgsz
+grep -E 'MODEL_WARMUP|imgsz' /tmp/test_yoloe_stability_yoloe.log
+# 期望:
+#   MODEL_WARMUP_BEGIN subscriptions_not_created=True
+#   MODEL_WARMUP_STAGE1_DONE elapsed=...
+#   MODEL_WARMUP_STAGE2_DONE elapsed=...
+#   MODEL_WARMUP_END total_elapsed=...
+
+# (d) warmup tensor 尺寸 + 模型 imgsz(从 runtime.yaml,跟相机分辨率无关)
+grep -E '^(  )?(width|height|fps|imgsz):' ~/yoloe_deploy/config/runtime.yaml
+# 区分:
+#   camera.width/height/fps  → YOLOE warmup tensor 用(任意占位)
+#   inference.imgsz          → 模型推理时 image resize 到 imgsz x imgsz 过模型
+# 注意:camera.width/height 与相机实际分辨率无任何关系,改它不影响 realsense。
+
+# (e) USB 带宽预算检查(2026-10-04 加)— arm 在 USB 2.0 hub 上必须 ≤640x480x15
+# 公式:color_Mbps + depth_Mbps ≤ USB 端口理论 Mbps × 0.6(扣 hub / 协议开销)
+# 经验值:
+#   head (USB 3.0 root hub,理论 5000 Mbps):1280x720x15 + 848x480x15 ≈ 319 Mbps,OK
+#   arm  (USB 2.0 hub,理论 480 → 实际 ~280 Mbps):640x480x15 + 640x480x15 ≈ 148 Mbps,OK
+#   arm  1280x720x15 + 848x480x15 = 319 Mbps → **超出** USB 2.0 → control_transfer
+#   EAGAIN 风暴 → 30-55s 后 stream 死(2026-09-28 doc "Plan A" 已踩过此坑)。
+
+# 实际算一下当前分辨率组合的总带宽:
+docker exec self_l4t bash -c '
+    calc() {
+        local w=$1 h=$2 fps=$3 bpp=$4
+        echo "$w $h $fps $bpp" | awk "{ printf \"%.0f Mbps\n\", \$1*\$2*\$bpp*\$fps*8/1024/1024 }"
+    }
+    echo "head color 1280x720x15 RGB(YUYV 2B/px):  $(calc 1280 720 15 2)"
+    echo "head depth 848x480x15  Z16       (2B/px):  $(calc  848 480 15 2)"
+    echo "arm  color 640x480x15  RGB(YUYV 2B/px):  $(calc  640 480 15 2)"
+    echo "arm  depth 640x480x15  Z16       (2B/px):  $(calc  640 480 15 2)"
+'
+
+# 监控带宽饱和的早期信号(arm log 里 EAGAIN 风暴):
+docker exec self_l4t grep -cE 'control_transfer returned error.*Resource temporarily unavailable' /tmp/two_realsense_inside.log
+# 期望:arm 上 = 0(基本没 error);若 > 50/s 持续几秒 → 带宽饱和,降 arm 分辨率。
+# 注:这是**累加**计数,跨多轮 run;要算速率用 rate(每 5s 增量)。
+
+# arm 提高分辨率前的强制检查清单:
+#   1. 确认 arm USB port 走的是 USB 3.0(检查 lsusb -t,看 device 父 hub 是不是 3.0 root)
+#   2. 确认 hub 是 powered hub(否则供电不足也会 EAGAIN)
+#   3. 否则保持 ≤640x480x15
+
+--------------------------------------------------------------------------------
+[2.6] Path C 验证 — initial_reset=true 是否生效 (容器内 realsense log)
+--------------------------------------------------------------------------------
+
+背景: 2026-10-04 二次启动 arm 相机 missing,根因是上一次 run 残留 USB handle 导致
+      RS2_USB_STATUS_BUSY → fallback partial device → uvc_get_ctrl(UVC_GET_MAX) 失败 →
+      driver die。Path C 在 two_realsense.launch.py 加 "initial_reset": "true",
+      强制 realsense 驱动在 node init 时对 USB device 做硬重置,避开残留 handle。
+      本节用来验证 Path C 是否真的生效。
+
+(a) 一键"应为空"清单(期望 **没有任何输出**)
+
+    docker exec self_l4t grep -E \
+      'RS2_USB_STATUS_BUSY|falling back to partial device|uvc_get_ctrl\(UVC_GET_MAX\) failed|Error starting device' \
+      /tmp/two_realsense_inside.log | tail -20
+
+    任何一行输出都说明:
+      - BUSY                → USB interface 还被前次占用,initial_reset 没重置干净
+      - partial device      → 驱动 fallback 到残缺模式,即将 fail
+      - GET_MAX failed      → 驱动马上要死
+      - Error starting      → 相机节点已 down,该相机 topic 不会更新
+
+(b) 看 initial_reset 实际触发(关键字因 librealsense 版本略有差异)
+
+    docker exec self_l4t grep -iE 'reset device|usb reset|reinit|reset complete' \
+      /tmp/two_realsense_inside.log | tail -20
+
+    看到 1-2 行 `Reset ...` 类的字眼 = 驱动确实执行了硬重置。
+    完全没有 = 启动参数没传过去(检查 install 副本编辑是否生效,
+    见本节 (e))。
+
+(c) 两相机节点都活着 + 都拿到 video 设备
+
+    docker exec self_l4t bash -c '
+      echo "-- realsense2_camera_node 进程 --"
+      ps -eo pid,args | grep realsense2_camera_node | grep -v grep
+      echo
+      echo "-- /dev/video* 列表 --"
+      ls -la /dev/video* 2>/dev/null | head -10'
+
+    应看到两个 realsense2_camera_node(head + arm 各自的 _<serial> 后缀),
+    至少 6 个 /dev/video*(每相机 color+depth+metadata 各 1,加 IMU)。
+
+(d) 两相机 topic 都 pub_count=1 + QoS 正确
+
+    docker exec self_l4t bash -c '
+      source /opt/ros/humble/setup.bash
+      for t in \
+          /camera_head/camera_head/color/image_raw \
+          /camera_head/camera_head/aligned_depth_to_color/image_raw \
+          /camera_arm/camera_arm/color/image_raw \
+          /camera_arm/camera_arm/aligned_depth_to_color/image_raw; do
+        echo "-- \$t --"
+        ros2 topic info -v \$t 2>/dev/null \
+          | grep -E "Publisher count|Reliability|History|Depth" | sed "s/^/    /"
+      done'
+
+    期望:Publisher count = 1(每路),Reliability = BEST_EFFORT,History = KEEP_LAST,
+         Depth = 1。
+
+(e) 验证 install 副本的编辑是否生效(若 (a) 出现 BUSY 但 (b) 完全无 reset 字眼)
+
+    docker exec self_l4t grep -E 'initial_reset|wait_for_device_timeout' \
+      /opt/yoloe_transfer/humble_ws/install/yoloe_humble_orchestration/share/yoloe_humble_orchestration/launch/two_realsense.launch.py
+
+    应看到两行:
+        "initial_reset": "true",
+        "wait_for_device_timeout": "30",
+
+    若没有 = docker rm 后重建过容器,install 副本回到了 baked 版本,
+       需重新编辑(参照当前 CONTAINER_INSTALL + HOST_SRC 两处路径)。
+       持久性:跨 `docker stop/start` 保留(overlay2 upperdir),
+              `docker rm` / 重建镜像后丢失。
+
+(f) 验证仍失败时的下一步动作(超出 Path C 范围,留作参考)
+
+    Path C 解决"前次残留 handle"问题。如果 (a) 仍出现 BUSY 但 (b) 显示
+    reset 已执行,说明 USB reset 不能解决 — 可能 hub 控制器锁死或
+    物理层异常,下一道方案:
+      1. udev 强制 unbind → bind(等几秒让内核 re-enumerate):
+           # 在 host 上(需 root / sudo):
+           for dev in /sys/bus/usb/devices/*/idVendor; do
+               [ "$(cat ${dev%/*}/idVendor 2>/dev/null)" = "8086" ] || continue
+               echo ${dev%/*} | xargs basename
+               echo ${dev%/*}/driver/unbind
+               echo ${dev%/*}/driver/bind
+           done
+      2. 拔线重插(最彻底)
+      3. 换 USB 端口 / 加 powered hub
+
+(g) 持续跑多轮时的"残留指标"(专门盯二次/三次启动)
+
+    docker exec self_l4t bash -c '
+      for serial in 261622078621 262422071246; do
+        echo "-- serial=\$serial --"
+        grep -cE "claim usb interface: 0, error: RS2_USB_STATUS_BUSY" \
+            /tmp/two_realsense_inside.log
+      done'
+
+    期望:每相机计数 = 0。
+    若第一轮 OK、第二轮 arm=1 → Path C 没解决跨轮残留,
+    改走 (f) 的物理方案。
+
+(h) 启动期 type mismatch / SIGSEGV 检测(2026-10-04 踩坑)
+
+    Path C 修 USB busy 时加了 `wait_for_device_timeout="30"`,但 rs_launch.py
+    把这个参数声明为 double,字符串 "30" 被解析成 int,int → double 类型不匹配
+    让 realsense_node_factory 抛异常 + SIGSEGV(-11),两相机在 __init__ 阶段
+    直接死,根本走不到 USB init。**症状:相机进程瞬间消失,YOLOE 看到
+    color_age=never / depth_age=never 持续 SKIPPED。**
+
+    出现此类问题的诊断清单:
+
+    # 1. 查启动 ERROR(任何 "Wrong parameter type" / "has invalid type")
+    docker exec self_l4t grep -E \
+      'Wrong parameter type|has invalid type|realsense_node_factory.cpp:[0-9]+' \
+      /tmp/two_realsense_inside.log | tail -20
+
+    # 2. 查进程死法(预期 SIGSEGV = -11)
+    docker exec self_l4t grep -E \
+      'process has died.*exit code -11' \
+      /tmp/two_realsense_inside.log
+
+    # 3. 容器内确认 realsense 节点是否还活着
+    docker exec self_l4t ps -eo pid,etime,args | \
+      grep realsense2_camera_node | grep -v grep
+    # 期望:两个 head/arm 进程(各带 _<serial>)
+    # 若只剩 tail -f,说明都死了
+
+    修复:
+    - launch_arguments 字典里值都是字符串,rclpy 会按"string → typed param"
+      自动 parse,但**不跨类型 coerce**(int 不会自动转 double)。
+    - typed 参数(double / int)必须传能 parse 成目标类型的字符串:
+        double → "30.0"   (不要 "30")
+        int    → "30"
+        bool   → "true" / "false"  (rs_launch 多数 bool 接受)
+    - 若不确定,直接看 rs_launch.py 的 declare_parameter <name> <type>
+      或跑一次 `ros2 param get /camera_head/camera_head wait_for_device_timeout`
+      (返回类型如 "double" / "integer")。
+    - **最稳妥**:不加这个参数,让 realsense 用默认值。如果非加不可,先
+      跑一遍 `docker exec self_l4t ... rs_launch.py` 直接 dry-run 一下,
+      看输出里是否报 "Wrong parameter type"。
+
+--------------------------------------------------------------------------------
+[2.7] Phase 1.6 USB force reset 监控 (kernel unbind+bind,容器内自动跑)
+--------------------------------------------------------------------------------
+
+背景: 2026-10-04 同一 session 内复测发现,Path C `initial_reset=true` 只触发
+      librealsense 端的 `hardware_reset()`(realsense_node_factory.cpp:247),
+      **不释放 kernel 端 libusb handle**。head 靠 12s 重试窗口撑过去了,
+      arm 在 USB 2.0 hub 后面没撑过去 → "failed to set power state" →
+      Error starting device。
+
+      Path A 在 test_yoloe_stability.sh Phase 1.6(YOLOE ready 之后、cameras
+      之前)做 **kernel 端 unbind+bind**,等价于 USB 拔插。容器是 root + sysfs
+      已 bind mount,完全脚本化,不依赖 sudo。
+
+(a) Phase 1.6 自己的输出(在跑测试的终端直接看)
+
+    [14:25:01] ===== Phase 1.6: USB force reset (kernel unbind+bind for both cameras) =====
+    [force-reset] camera_head @ port 2-1
+    [force-reset] camera_head @ 2-1 re-enumerated after 0ms
+    [force-reset] camera_arm @ port 1-3.3
+    [force-reset] camera_arm @ 1-3.3 re-enumerated after 500ms
+    [force-reset] done
+    [14:25:06]   USB force reset OK
+
+    期望:每个相机 unbind → re-enumerated within 1s,无 ERR 行。
+    若出现 `ERR: ... 不存在` → USB 端口变了,跑 `lsusb -t` 重定位并通过
+      `HEAD_USB_PORT=` / `ARM_USB_PORT=` 环境变量覆盖。
+    若出现 `ERR: bind 后 5s 内未重新出现` → device 物理掉线,
+      检查 USB 线 / 供电 hub。
+
+(b) 验证 Phase 1.6 后 kernel handle 已释放(Phase 2 启动前预期无 BUSY)
+
+    docker exec self_l4t grep -E 'RS2_USB_STATUS_BUSY|partial device|uvc_get_ctrl\(UVC_GET_MAX\) failed|Error starting device' /tmp/two_realsense_inside.log | tail -20
+
+    注意:这条命令要等 Phase 2 起完后才有意义;若 Phase 1.6 之前 log 就有
+    BUSY 残留,Phase 1.6 不会清 log(只 reset USB,不动 log 文件)。
+
+(c) 跨多轮 run 的累积状态(每个 run 都会跑一次 Phase 1.6,但不会清 log)
+
+    docker exec self_l4t bash -c '
+      for serial in 261622078621 262422071246; do
+        echo "-- serial=\$serial --"
+        grep -cE "claim usb interface: 0, error: RS2_USB_STATUS_BUSY" \
+            /tmp/two_realsense_inside.log
+      done'
+
+    期望:每相机计数 = 0(每个 run 跑前 Phase 1.6 都把 handle 释放了)。
+    若仍 > 0 → Phase 1.6 没生效 / device 物理掉线 / USB hub 控制器锁死。
+    注: Phase 1.6 是**先** unbind **再** bind,所以即使上次 handle 残留,
+    bind 时 kernel 重新分配,新 realsense 进程应该能 claim 成功。
+
+(d) 手动复现 Phase 1.6(不进 test_yoloe_stability.sh,自己跑一遍)
+
+    # 在 host 上(普通用户就行,操作实际在容器内):
+    docker exec self_l4t bash -c '
+      for port in 2-1 1-3.3; do
+        echo "== \$port =="
+        echo "\$port" | sudo tee /sys/bus/usb/drivers/usb/unbind
+        sleep 1
+        echo "\$port" | sudo tee /sys/bus/usb/drivers/usb/bind
+        sleep 1
+      done
+      ls /sys/bus/usb/devices/{2-1,1-3.3}/idVendor 2>&1'
+
+    注:容器内 root 直接写不需要 sudo;这里用 `sudo tee` 是为了演示
+    "在 host 视角"也能做同样事(host 上需要 sudo)。
+
+(e) 失败模式速查
+
+    ERR: /sys/bus/usb/devices/<port> 不存在
+        → USB 端口变了(设备插拔换了位置)。跑 `lsusb -t` 修正 HEAD_USB_PORT/
+          ARM_USB_PORT 环境变量。
+    ERR: unbind <port> 失败 (Permission denied)
+        → 容器内 root 仍写不进去,sysfs 没 bind mount。检查 docker 启动参数;
+          临时方案:在 host 上手动跑 (d)。
+    ERR: bind <port> 失败
+        → device 物理掉了(线松/供电不足/USB hub 控制器死)。物理拔插后再跑。
+    ERR: bind 后 5s 内未重新出现
+        → bind 成功但 device 没回到 sysfs(USB enumeration 卡住)。同 bind 失败
+          的处理。
+    全部 ERR 都没出但 cameras 仍 BUSY
+        → Phase 1.6 只对**这两个 port**做了 reset,如果还有第三个 device
+          或某个 upstream hub 持 handle,要扩展到 hub 端口(1-3 hub 而非
+          1-3.3 device)。
+
+--------------------------------------------------------------------------------
+[3] 实时帧率 (host Foxy 终端跑)
+--------------------------------------------------------------------------------
+
+    ros2 topic hz /camera_head/camera_head/color/image_raw
+    ros2 topic hz /camera_arm/camera_arm/color/image_raw
+    ros2 topic hz /camera_head/camera_head/aligned_depth_to_color/image_raw
+    ros2 topic hz /camera_arm/camera_arm/aligned_depth_to_color/image_raw
+
+预期值: 计划是 15 Hz 目标,实际观测取决于 USB 带宽 + YOLOE 推理压力。
+正常应稳定在 12-15 Hz;若跌到 < 5 Hz 或断流,大概率是相机 stream 死了。
+
+--------------------------------------------------------------------------------
+[4] 节点 / publisher 状态
+--------------------------------------------------------------------------------
+
+    ros2 node list | grep -E 'camera|yoloe'
+
+应看到三个:
+    /yoloe_dual_camera_perception
+    /camera_head/camera_head
+    /camera_arm/camera_arm
+
+QoS 校验(看 Reliability=BEST_EFFORT, History=KEEP_LAST, Depth=1):
+
+    ros2 topic info /camera_head/camera_head/color/image_raw -v
+    ros2 topic info /camera_arm/camera_arm/color/image_raw -v
+
+Publisher 数突变(pub_count 从 1 变 0)→ 相机 stream 死了。
+
+--------------------------------------------------------------------------------
+[5] 容器内 topic 列表 (验证 cross-DDS 互通)
+--------------------------------------------------------------------------------
+
+    docker exec self_l4t bash -c \
+      "source /opt/ros/humble/setup.bash && ros2 topic list | grep -E 'camera_head|camera_arm'"
+
+应有 8 个(每相机 color / depth / aligned_depth_to_color / camera_info):
+
+    /camera_head/camera_head/color/image_raw
+    /camera_head/camera_head/depth/image_rect_raw
+    /camera_head/camera_head/aligned_depth_to_color/image_raw
+    /camera_head/camera_head/color/camera_info
+    /camera_arm/camera_arm/color/image_raw
+    /camera_arm/camera_arm/depth/image_rect_raw
+    /camera_arm/camera_arm/aligned_depth_to_color/image_raw
+    /camera_arm/camera_arm/color/camera_info
+
+--------------------------------------------------------------------------------
+[6] yoloe_deploy 现有工具适用性说明
+--------------------------------------------------------------------------------
+
+    workflow_monitor.py
+        订阅 yoloe_interfaces/msg/{ObservationCommand, ObservationResult},
+        仅 two_stage_node 发这两个 msg。
+        本脚本只跑 cameras + dual_camera_node,**不启动 two_stage_node**,
+        因此 workflow_monitor.py **不会有任何输出**。
+        适用场景: 接 BT two_stage 流程后的 workflow 阶段。
+        命令(无输出属正常):
+            source ~/yoloe_deploy/config/foxy_humble_dds.env
+            source /opt/ros/foxy/setup.bash
+            source ~/yoloe_deploy/ros2_ws/install/local_setup.bash
+            python3 ~/yoloe_deploy/scripts/workflow_monitor.py
+
+    print_environment.py / verify_bundle.py
+        setup 期诊断(YOLOE host Foxy 环境 / bundle 完整性)。
+        本脚本 Phase 0 prerequisites 已等价检查这两项,不重复调用。
+
+    benchmark_prompt_backend.py
+        PT / TensorRT 单 prompt 性能基准,非实时监控。
+
+    d435_realtime.py
+        D435 standalone viewer,非本 pipeline。
+
+结论: 实时监控 cameras + dual_camera_node pipeline,
+**最有效的手段仍是 ros2 topic hz + 日志 tail**,yoloe_deploy 现成调试工具
+在此场景覆盖不到。
+
+--------------------------------------------------------------------------------
+[7] 停止脚本
+--------------------------------------------------------------------------------
+
+在跑 test_yoloe_stability.sh 的终端按 Ctrl-C:
+    → 自动跑最终总结(Phase 4/5/6:status tally + CSV + 相机健康)
+    → kill host YOLOE + 容器内 cameras(realsense2_camera_node)
+    → exit
+
+如果 Ctrl-C 之后容器内仍有 realsense2_camera_node 残留(reparent init):
+
+    docker exec self_l4t ps -eo pid,args | grep realsense2_camera_node
+
+按 PID 阶梯 INT → TERM → KILL,不要 pkill -f(会误伤 wrapper / 其他 ROS 进程)。
+
+--------------------------------------------------------------------------------
+[8] 完整 phase 顺序(参考)
+--------------------------------------------------------------------------------
+
+    Phase 0     prerequisites (container up, yoloe built, model/prompt 在, ≥2 video)
+    Phase 1     host Foxy 起 YOLOE: ros2 launch yoloe_perception dual_camera_foxy.launch.py
+    Phase 1.5   等 YOLOE log: CONTINUOUS_DUAL_CAMERA_STARTED (≤120s,通常 < 30s)
+    Phase 2     容器内起 cameras: ros2 launch yoloe_humble_orchestration two_realsense.launch.py
+    Phase 2.5   等 head + arm 首个 CONTINUOUS_RESULT (≤120s)
+    Phase 3     持续监控(每 5s 一行 pub_count + hz + latest result)→ Ctrl-C
+    终态        cleanup → Phase 4 tally / Phase 5 CSV / Phase 6 health → 杀进程 → exit
+================================================================================
