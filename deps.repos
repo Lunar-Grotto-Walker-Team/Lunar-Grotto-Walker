@@ -12,9 +12,19 @@
 #
 # 版本以完整 commit SHA 固定，保证任何人拉到的都是验证过的那一套。
 # vendor 仓库打 tag 后可换成 `version: v0.1.0-alpha`。
+#
+# 这里有两个仓库：vendor（第三方驱动与基础库）和 pointlio（GPL-2.0 的
+# Point-LIO 前端，单独成仓库做许可证隔离）。两者都用 vcs import 落到 src/ 下。
 
 repositories:
   vendor:
     type: git
     url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-Vendor.git
-    version: 4b7448742f12ef92b061a9fa67eccc470384ec92
+    version: 78612d675af13927558cc172c09f0d2afb09ce2c
+
+  # GPL-2.0 的 Point-LIO 前端单独成仓库（许可证隔离），落地路径仍是
+  # src/point_lio_ros2，包名 point_lio 不变。详见 docs/dependencies.md 1.2。
+  pointlio:
+    type: git
+    url: https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO.git
+    version: d01a319d8e0f6f9efa5eb43f80e6e79834f9a42b
