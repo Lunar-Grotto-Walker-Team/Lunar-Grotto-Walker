@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>body_pose_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    Persistent bridge node for Go2 sport API Euler(1007) +
+    BalanceStand(1002). Holds a target rpy via 50Hz Euler republish
+    against the balance controller. Provides /set_body_pose service.
+    2026-10-13 v7:BodyHeight(1013)从 3-call 移除,Go2 固件对 api 1013
+    bh_off 是 dead control(真机验证)。
+    See docs/superpowers/specs/2026-10-10-body-pose-bridge-design.md.
+  </description>
+  <maintainer email="dev@example.com">Dev</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>unitree_api</depend>
+  <depend>unitree_go</depend>
+
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

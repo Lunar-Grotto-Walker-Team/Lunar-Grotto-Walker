@@ -1,0 +1,32 @@
+# SetBodyPose
+#
+# Persistent set-and-hold for Go2 sport API Euler(1007) +
+# BalanceStand(1002). The bridge continuously republishes the target
+# rpy at 50Hz to fight the balance controller (v1-v6 演进见
+# body_pose_bridge_node.hpp 文件头)。
+#
+# 2026-10-13 简化:body_h 字段去除。Go2 固件(2026-10-10 真机验证)对
+# BodyHeight api(1013)bh_off 参数不响应,act body_h 在 bh_off=0 vs
+# bh_off=-0.18 几乎无差别(差 ≤ 2mm),参见 feedback memory
+# feedback_go2_bodyheight_1013_unresponsive。SetBodyPose 因此退化为
+# 仅控 rpy;lower/raise body 的需求由 StandUp(身高档位)覆盖。
+#
+# See docs/superpowers/specs/2026-10-10-body-pose-bridge-design.md §4.1.
+
+# ---- Request ----
+# Standard right-hand-rule Euler angles (rad).
+# NOTE: Go2 firmware inverts the pitch convention — pitch>0 = nose DOWN
+# (verified on real hardware 2026-10-10). Caller must use the inverted
+# sign for "nose down forward-tilt".
+float64 roll
+float64 pitch
+float64 yaw
+# If true, bridge cancels its 50Hz republish and sends a final
+# Euler(0,0,0) + BalanceStand sequence. rpy fields are IGNORED in this
+# case. Used to release the bridge so StandDown / Move can take over the
+# /api/sport/request channel.
+bool clear
+---
+# ---- Response ----
+bool success
+string message

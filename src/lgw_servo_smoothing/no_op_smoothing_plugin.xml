@@ -1,0 +1,12 @@
+<library path="lgw_servo_smoothing">
+  <class type="lgw_servo_smoothing::NoOpSmoothing"
+         base_class_type="online_signal_smoothing::SmoothingBaseClass">
+    <description>
+      Pass-through smoother for MoveIt Servo: the joint position command is
+      returned unchanged. Used to diagnose (and, if confirmed, remove) the
+      ~5x attenuation that the default Butterworth plugin introduces in
+      Servo's position-integrating control loop. See
+      docs/servo/2026-10-30-servo-speed-attenuation.md.
+    </description>
+  </class>
+</library>
