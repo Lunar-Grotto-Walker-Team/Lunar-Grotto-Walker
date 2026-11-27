@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  感知结果桥专用 CycloneDDS 配置:同一个进程里两个 domain 各走各的接口。
+
+    domain 0 (eth10) —— 主栈:伺服 / tracker / BT / Go2
+    domain 7 (lo)    —— cameras + YOLOE(见 config/dds_local_lo.xml)
+
+  CycloneDDS 的配置是进程级加载、按 domain 段查找,所以一个进程里两个
+  participant 可以有不同的接口/分片设置。这一点已实测:同一份 XML 下
+  domain 0 能看到 62 个机器狗话题,domain 7 能看到相机和 YOLOE。
+
+  domain 0 的段必须和宿主机 /my_ws/l4t/.l4t_env.sh 里的设置一致,
+  否则和主栈的 participant 发现不到。
+-->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="0">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="eth10" priority="default" multicast="default"/>
+      </Interfaces>
+      <AllowMulticast>spdp</AllowMulticast>
+    </General>
+  </Domain>
+  <Domain Id="7">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" priority="default" multicast="default"/>
+      </Interfaces>
+      <FragmentSize>60000B</FragmentSize>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Internal>
+      <!-- 只写 max 不写 min:min 达不到会让 participant 直接创建失败 -->
+      <SocketReceiveBufferSize max="16MB"/>
+      <SocketSendBufferSize max="16MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>

@@ -12,6 +12,14 @@
 
 请参考 [开发流程指南](docs/project/Git-Flow-Guide.md)
 
+## 模块
+
+| 模块 | 代码 | 文档 |
+|---|---|---|
+| 导航与建图 | `src/terrain/`、Point-LIO（独立仓库） | `docs/slam/` |
+| 行为树与机械臂 | `src/lgw_bt_planner`、`src/lgw_3d_tracker`、`src/go2_transit`、`src/agx_topic_hardware` 等 | [docs/bt/](docs/bt/README.md) |
+| 启动与验证脚本 | `tools/lgw/` | [tools/lgw/README.md](tools/lgw/README.md) |
+
 ## 依赖与构建
 
 > ⚠️ **本仓库必须与 vendor 仓库配套使用，单独 clone 下来是编译不过的。**

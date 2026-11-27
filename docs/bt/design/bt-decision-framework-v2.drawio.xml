@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-09-15T14:30:00.000Z" agent="lgw_bt_planner docs" etag="lgw-bt-framework-v2" version="22.0.0" type="device">
+  <diagram name="lgw-bt-decision-framework-v2" id="lgw-bt-framework-v2">
+    <mxGraphModel dx="1800" dy="1150" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1820" pageHeight="1170" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ============== TITLE ============== -->
+        <mxCell id="title" value="Lunar Grotto Walker — BT 决策框架 (v2)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="10" width="1380" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="title_en" value="lgw_bt_planner · BehaviorTree.CPP v4 + BT.ROS2" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=2;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="55" width="1380" height="22" as="geometry" />
+        </mxCell>
+
+        <!-- ============== L1 BT ENGINE ============== -->
+        <mxCell id="l1_band" value="L1 · BT 引擎" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=20;fontStyle=1;align=left;spacingLeft=15;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="1380" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="l1_box1" value="BT.CPP v4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="145" width="380" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="l1_box2" value="TreeExecutionServer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="530" y="145" width="380" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="l1_box3" value="Groot2 监视" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="950" y="145" width="380" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- L1 -> L2 main arrow -->
+        <mxCell id="e_l1_l2" value="加载" style="endArrow=classic;html=1;rounded=0;strokeColor=#555555;strokeWidth=3;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=14;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="l1_band" target="l2_band">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============== L2 BT TREES ============== -->
+        <mxCell id="l2_band" value="L2 · BT 树" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=20;fontStyle=1;align=left;spacingLeft=15;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="250" width="1380" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- L2 current (3 trees, aligned with L3 current) -->
+        <mxCell id="l2_t1" value="PoseViaSetPoseStamped" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="310" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l2_t2" value="GoToTargetAndBack" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="530" y="310" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l2_t3" value="PickAndPlaceDemo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="950" y="310" width="380" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- L2 planned (4 trees) -->
+        <mxCell id="l2_t4" value="ExploreUntilTarget" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="405" width="305" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l2_t5" value="SampleAtTarget" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="455" y="405" width="305" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l2_t6" value="ReturnToDock" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="800" y="405" width="305" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l2_t7" value="MissionGrottoWalker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1145" y="405" width="305" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- L2 -> L3 arrows (clean, specific) -->
+        <!-- Current trees (solid green, 3 connections) -->
+        <mxCell id="e_t1_pose" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t1" target="l3_n1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t1_move" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t1" target="l3_n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t2_named" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t2" target="l3_n3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t3_pose" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t3" target="l3_n1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t3_move" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t3" target="l3_n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t3_named" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t3" target="l3_n3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Planned trees (dashed gray, 4 connections) -->
+        <mxCell id="e_t4_explore" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t4" target="l3_n5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t4_perc" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t4" target="l3_n6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t6_replay" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t6" target="l3_n9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t7_done" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l2_t7" target="l3_n10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============== L3 BT NODES PLUGIN ============== -->
+        <mxCell id="l3_band" value="L3 · BT 节点 plugin" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=20;fontStyle=1;align=left;spacingLeft=15;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="510" width="1380" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- L3 current (3 nodes, aligned with L2 current) -->
+        <mxCell id="l3_n1" value="Pose 字面量" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="570" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n2" value="绝对姿态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="530" y="570" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n3" value="命名姿态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="950" y="570" width="380" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- L3 planned (7 nodes in one row) -->
+        <mxCell id="l3_n4" value="导航目标" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n5" value="探索触发" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="295" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n6" value="目标监听" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="480" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n7" value="位姿计算" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="665" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n8" value="路径记录" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="850" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n9" value="路径回放" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1035" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l3_n10" value="完成判定" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="665" width="170" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- L3 -> L4 arrows -->
+        <!-- Current nodes to /move_action and /feedback/joint_states -->
+        <mxCell id="e_n2_move" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n2" target="l4_a1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n3_move" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n3" target="l4_a1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n2_js" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#82b366;strokeWidth=2;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n2" target="l4_a2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Planned nodes to planned actions -->
+        <mxCell id="e_n4_nav" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n4" target="l4_a3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n5_nav" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n5" target="l4_a3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n9_nav" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n9" target="l4_a3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n6_det" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n6" target="l4_a4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n8_tf" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#999999;strokeWidth=2;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="l3_n8" target="l4_a5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============== L4 ACTION SERVERS ============== -->
+        <mxCell id="l4_band" value="L4 · 动作服务器 / 话题" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;fontSize=20;fontStyle=1;align=left;spacingLeft=15;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="785" width="1380" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="l4_a1" value="/move_action" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="110" y="850" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l4_a2" value="/feedback/joint_states" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="370" y="850" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l4_a3" value="/navigate_to_pose" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="650" y="850" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l4_a4" value="/detected_targets" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="910" y="850" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="l4_a5" value="/tf  /map" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=16;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="850" width="220" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ============== LEGEND (bottom) ============== -->
+        <mxCell id="legend_band" value="图例" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=1;fontSize=14;fontStyle=1;align=left;spacingLeft=10;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="950" width="1380" height="32" as="geometry" />
+        </mxCell>
+
+        <mxCell id="leg_curr" value="▌ 当前实现" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="60" y="995" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_plan" value="▌ 规划扩展" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="995" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_engine" value="▌ 引擎 L1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="460" y="995" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_tree" value="▌ 树 L2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="660" y="995" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_action" value="▌ 动作/话题 L4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="860" y="995" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="leg_line" value="— 实线: 当前流向   ┄ 虚线: 规划流向" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=13;fontColor=#444444;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="995" width="320" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ============== MISSION FLOW (RIGHT SIDE) ============== -->
+        <mxCell id="mf_band" value="全任务执行流" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5ff;strokeColor=#0277bd;strokeWidth=2;fontSize=20;fontStyle=1;align=left;spacingLeft=15;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="90" width="370" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_step1" value="① 探索" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="155" width="270" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_e1" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="mf_step1" target="mf_step2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_step2" value="② 采样" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="265" width="270" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_e2" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="mf_step2" target="mf_step3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_step3" value="③ 折返" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="375" width="270" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_e3" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="mf_step3" target="mf_step4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_step4" value="④ 卸货" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="485" width="270" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_e4" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#0277bd;strokeWidth=3;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="mf_step4" target="mf_step5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_step5" value="⑤ 完成" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;strokeWidth=2;dashed=1;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1490" y="595" width="270" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_note" value="绿 = 已实现 / 复用&#10;灰虚线 = 待开发节点&#10;每步可挂 RetryUntilSuccessful" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#666666;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="700" width="340" height="65" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_ref_band" value="对应 L2 / L3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1f5ff;strokeColor=#0277bd;strokeWidth=2;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="800" width="370" height="32" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mf_ref1" value="① L2: ExploreUntilTarget" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="840" width="350" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="mf_ref2" value="② L2: SampleAtTarget → 复用 PickAndPlaceDemo" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="864" width="350" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="mf_ref3" value="③ L2: ReturnToDock" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="888" width="350" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="mf_ref4" value="④ 同 ② 的 place 步骤" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="912" width="350" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="mf_ref5" value="⑤ L2: MissionGrottoWalker + L3: 完成判定" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=13;fontColor=#444444;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="936" width="350" height="22" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
