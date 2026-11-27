@@ -1,0 +1,12 @@
+<library path="agx_topic_hardware">
+  <class
+    name="agx_topic_hardware/AgxTopicSystem"
+    type="agx_topic_hardware::AgxTopicSystem"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>
+      State from /feedback/joint_states, command published to
+      /control/joint_states. Use instead of mock_components/GenericSystem so
+      MoveIt and Servo see the real arm.
+    </description>
+  </class>
+</library>

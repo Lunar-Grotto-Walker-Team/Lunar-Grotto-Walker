@@ -1,0 +1,27 @@
+# SetVuiBrightness
+#
+# Forwarder service around Unitree Go2 VUI SetBrightness
+# (api_id=1005) over `unitree::robot::go2::VuiClient::SetBrightness(level)`,
+# range 0-10 (VUI 屏幕亮度,0=dimmest, 10=brightest).
+#
+# Why a separate bridge node:
+# `lgw_bt_planner`'s SetLedBrightnessNode used to call the SDK directly
+# in-process; on the dev container that caused bt_runner to SIGSEGV
+# (exit code -11) when BT instantiated the node — the in-process SDK
+# DomainParticipant collided with the rclcpp rmw_cyclonedds_cpp
+# DomainParticipant (cyclone DDS 0.10.x in-process double-participant
+# issue). Isolating the SDK into a dedicated rclcpp node keeps the SDK
+# DDS DomainParticipant in its own process; the BT side then becomes
+# a thin BT::RosServiceNode<SetVuiBrightness> (which is exactly the
+# pattern already used for SetBodyPose → body_pose_bridge).
+#
+# Schema is intentionally small (one int + ack) because the underlying
+# SDK call has no rich payload — it's a fire-and-forget state setter
+# (1s synchronous RPC timeout, ret==0 means the firmware acked).
+#
+# Caller's BT node on FAILURE branch lets the operator see the
+# firmware-inaccessible state without crashing bt_runner.
+int32 level
+---
+bool success
+string message

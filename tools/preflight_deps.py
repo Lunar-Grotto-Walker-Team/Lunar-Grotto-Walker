@@ -10,7 +10,8 @@ vendor 仓库（第三方驱动与基础库）**不是本仓库的依赖项**，
 这个脚本在编译前跑一遍，把「缺环境」和「代码有问题」区分开：
 
   1. `point_lio_ros2/` 是否已由 `vcs import src < deps.repos` 拉到 src/ 下；
-  2. `unitree_go`、`livox_ros_driver2` 能否在 AMENT_PREFIX_PATH 里找到。
+  2. vendor 提供的包（`unitree_go`、`unitree_api`、`livox_ros_driver2`、
+     `behaviortree_ros2`、`agx_arm_msgs`、`agx_arm_moveit`）能否在 AMENT_PREFIX_PATH 里找到。
 
 只用标准库，不依赖 ROS 运行时，任何终端都能跑。
 
@@ -28,6 +29,10 @@ from pathlib import Path
 VENDOR_PACKAGES = {
     "unitree_go": ("simple_loop_closure", "utlidar_terrain_fill"),
     "livox_ros_driver2": ("point_lio",),
+    "unitree_api": ("body_pose_bridge", "lgw_bt_planner"),
+    "behaviortree_ros2": ("lgw_bt_planner", "go2_transit"),
+    "agx_arm_msgs": ("lgw_bt_planner",),
+    "agx_arm_moveit": ("lgw_bt_planner",),
 }
 
 # 由 vcs import 拉取、不在仓库里的本仓库包

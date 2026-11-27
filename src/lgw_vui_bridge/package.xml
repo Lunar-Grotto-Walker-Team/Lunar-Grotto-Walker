@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>lgw_vui_bridge</name>
+  <version>0.1.0</version>
+  <description>
+    Persistent bridge node that owns the Unitree Go2 VUI SetBrightness
+    SDK lifecycle (`unitree::robot::go2::VuiClient`). Exposes a single
+    rclcpp service /set_vui_brightness. See srv/SetVuiBrightness.srv
+    header for the in-process double-participant rationale.
+  </description>
+  <maintainer email="dev@example.com">Dev</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>ament_index_cpp</depend>
+
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

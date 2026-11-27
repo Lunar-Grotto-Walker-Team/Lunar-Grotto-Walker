@@ -51,15 +51,17 @@
 vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），**未改动的**由 vendor 的
 `deps.repos` 拉取。主仓库不关心它的内部分级，只用它 `install/` 里编译好的包。
 
-**本仓库在构建时实际用到的 vendor 包只有两个**：
+**本仓库在构建时实际用到的 vendor 包**：
 
 | vendor 包 | 谁需要 | 提供什么 |
 |---|---|---|
-| `unitree_ros2` → `unitree_go` | `simple_loop_closure`、`utlidar_terrain_fill` | 宇树消息定义 |
+| `unitree_ros2` → `unitree_go` / `unitree_api` | `simple_loop_closure`、`utlidar_terrain_fill`、`body_pose_bridge`、`lgw_bt_planner` | 宇树消息定义 |
 | `livox_ros_driver2` | `point_lio` | Mid-360S 的 `CustomMsg` |
+| `BehaviorTree.ROS2` → `behaviortree_ros2` / `btcpp_ros2_interfaces` | `lgw_bt_planner`、`go2_transit` | BT.ROS2 节点与执行动作（含 deadline 修复） |
+| `agx_arm_ros` → `agx_arm_msgs` / `agx_arm_moveit` | `lgw_bt_planner` | Piper 消息、MoveIt 配置与 demo launch |
 
-其余 vendor 包（`elevation_mapping`、`kindr_ros`、`BehaviorTree.ROS2`）服务于
-`nav_ws` 下的实机链路，主仓库编译时不需要，但同一个 vendor 工作区一并提供。
+其余 vendor 包（`elevation_mapping`、`kindr`、`kindr_ros`）服务于 `nav_ws` 下的实机链路，
+主仓库编译时不需要，但同一个 vendor 工作区一并提供。
 
 ### 2.1 vendor 入库的包（已修改）
 
@@ -71,6 +73,7 @@ vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），*
 | `vendor/src/elevation_mapping` | [Muhammad540](https://github.com/Muhammad540/elevation_mapping) | main @ 710fffc | 高程图（激光径向距离门 + Go2 配置） |
 | `vendor/src/kindr` | [ANYbotics](https://github.com/ANYbotics/kindr) | master @ 2446444 | elevation_mapping 依赖（CMake 版本适配） |
 | `vendor/src/kindr_ros` | [SivertHavso](https://github.com/SivertHavso/kindr_ros) | galactic @ af5667c | elevation_mapping 依赖（rosidl 依赖补齐） |
+| `vendor/src/agx_arm_ros` | [agilexrobotics](https://github.com/agilexrobotics/agx_arm_ros) | ros2 @ b9ad14d | Piper 驱动 + MoveIt（park 位姿 / topic 后端 / TF 前缀） |
 
 ### 2.2 vendor 导入的包（未修改）
 
@@ -92,13 +95,41 @@ vendor 仓库内部也分两级：**改过的入库**（带 `UPSTREAM.md`），*
 | `libeigen3-dev` | 3.4.0 | 线性代数 |
 | `libboost-all-dev` | 1.74 | `date_time`（Livox driver）、`filesystem`（SLC） |
 | `ros-humble-tf2-eigen`、`ros-humble-message-filters` | — | SLC 依赖 |
+| `ros-humble-moveit*` | 2.5.x | `lgw_bt_planner`、`lgw_servo_smoothing`、`servo_state_probe` |
+| `ros-humble-navigation2`（含 `nav2_msgs`） | 1.1.x | `go2_transit` 的 FollowPath / Spin 与消息 |
+| `ros-humble-ros2-control`、`ros-humble-ros2-controllers` | — | `agx_topic_hardware` 硬件插件 |
+| `ros-humble-behaviortree-cpp` | **4.9.1** | `lgw_bt_planner`、`go2_transit`（用 v4，不是 v3） |
+| `nlohmann-json3-dev` | 3.x | `lgw_bt_planner` |
 
 安装：
 
 ```bash
 sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
-                 ros-humble-message-filters libpcl-dev libeigen3-dev libboost-all-dev
+                 ros-humble-message-filters ros-humble-moveit ros-humble-navigation2 \
+                 ros-humble-ros2-control ros-humble-ros2-controllers \
+                 ros-humble-behaviortree-cpp nlohmann-json3-dev \
+                 libpcl-dev libeigen3-dev libboost-all-dev
 ```
+
+### 3.1 Python 依赖（pip）
+
+| 依赖 | 用途 |
+|---|---|
+| `pyAgxArm` | `agx_arm_ctrl` 的 CAN SDK（vendor 的 `agx_arm_ros` 运行时依赖） |
+
+```bash
+pip install -e /path/to/pyAgxArm     # 或 pip install pyAgxArm
+```
+
+### 3.2 配套外部仓库（不在本仓库、也不在 vendor）
+
+| 仓库 | 用途 | 缺失后果 |
+|---|---|---|
+| `Lunar-Grotto-Walker-Team/lgw-yoloe-perception`（AGPL-3.0，独立仓库） | 宿主机 Foxy 的 YOLOE 两阶段检测 + Humble 侧双相机编排，发布 `/perception/two_stage/*/result` | `IsHeadDetectionConfirmed` / `IsArmDetectionConfirmed` / `ComputeGraspPosesFromTrack` 等节点失败 |
+| 导航工作区（Nav2 bringup、costmap、地图） | `go2_transit` 复用 Nav2 的 FollowPath / Spin | `TransitToLocalPoint` 等不到 `/go2_transit/transit_to_pose` 动作服务器 |
+
+> 感知链路是 **AGPL-3.0**，按许可边界独立成仓库，不并入本仓库（同 Point-LIO 的处理）。
+> 缺失时本仓库仍可构建，只是依赖感知的 BT 子树会失败。
 
 ## 4. 手工安装到 `/usr/local` 的 SDK
 
@@ -190,7 +221,9 @@ vcs import src < deps.repos                              # 只拉 point_lio_ros2
 
 sudo apt install ros-humble-gtsam ros-humble-pcl-ros ros-humble-tf2-eigen \
                  ros-humble-message-filters ros-humble-grid-map-* \
-                 libpcl-dev libeigen3-dev libboost-all-dev
+                 ros-humble-moveit ros-humble-navigation2 ros-humble-ros2-control \
+                 ros-humble-ros2-controllers ros-humble-behaviortree-cpp \
+                 nlohmann-json3-dev libpcl-dev libeigen3-dev libboost-all-dev
 
 python3 tools/preflight_deps.py                          # 检查环境是否就绪
 colcon build --symlink-install --parallel-workers 4
