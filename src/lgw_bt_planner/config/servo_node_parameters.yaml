@@ -1,0 +1,575 @@
+# config/servo_node_parameters.yaml
+#
+# Task 4 of the 2026-11-07 node-split plan: the single source of every
+# parameter name, type and default the servo node declares.
+#
+# The top-level key becomes the generated C++ namespace (`servo_params`), the
+# CMake target `servo_node_params` becomes the header name, and the keys below
+# it are the parameter names EXACTLY as they appear on the node (the top-level
+# key is a namespace only -- it is not part of the parameter name).
+#
+# What belongs here: name, type, default, range. What does NOT: the shipped
+# robot tuning. That stays in config/servo_node.yaml, which overrides this
+# schema at runtime -- the same split move_group uses. Keeping the tuned values
+# out of the schema means a launch without a params file still starts, at the
+# documented neutral default, instead of failing.
+servo_params:
+  # ---- frames and pose sources ----
+  frame_prefix:
+    type: string
+    default_value: "arm1/"
+    description: "TF prefix of the arm's frames (arm1/base_link, arm1/tcp_link)."
+  pose_watch_topic:
+    type: string
+    default_value: "/control/joint_states"
+    description: "JointState topic the control law treats as the arm's current pose."
+  tcp_pose_domain:
+    type: string
+    default_value: "command"
+    description: "Which pose the look-at law aims from: 'command' (FK of follow_reference_topic) or 'measured' (TF)."
+  arm_calibration_path:
+    type: string
+    default_value: ""
+    description: "arm_calibration.json to load; empty uses the installed default."
+  follow_check_enabled:
+    type: bool
+    default_value: true
+    description: "Enable the command-vs-real-arm following monitor."
+  follow_reference_topic:
+    type: string
+    default_value: "/control/joint_states"
+    description: "JointState topic Servo integrates its deltas in."
+  follow_tolerance_rad:
+    type: double
+    default_value: 0.15
+    description: "Joint gap above which the following monitor reports follower lag."
+    validation:
+      gt_eq: [0.0]
+  follow_timeout_ms:
+    type: int
+    default_value: 300
+    description: "How long the gap may stay above the tolerance before HOLD."
+    validation:
+      gt_eq: [0]
+
+  # ---- pinned-posture family ----
+  posture_j3_rad:
+    type: double
+    default_value: -0.720
+    description: "Primary pinned elbow fold (j3)."
+  posture_j5_rad:
+    type: double
+    default_value: -0.800
+    description: "Primary pinned wrist bend (j5), forward/level/up profile."
+  posture_j3_alt_rad:
+    type: double
+    default_value: -0.484
+    description: "Fallback pinned elbow fold, used for close/low targets."
+  posture_j5_alt_rad:
+    type: double
+    default_value: 0.600
+    description: "Fallback pinned wrist bend, used for close/low targets."
+  posture_j2_step_rad:
+    type: double
+    default_value: 0.150
+    description: "Grid step for the j2 search; 0 disables the grid."
+  posture_j2_nominal_rad:
+    type: double
+    default_value: 0.890
+    description: "Preferred j2, the warm start of the j2 search."
+  posture_j2_min_rad:
+    type: double
+    default_value: 0.150
+    description: "Lower bound of the j2 search."
+  posture_j2_max_rad:
+    type: double
+    default_value: 1.571
+    description: "Upper bound of the j2 search (90 deg; more buys nothing)."
+  posture_cam_min_height_m:
+    type: double
+    default_value: 0.200
+    description: "Camera height floor for collision/platform clearance."
+  posture_cam_max_radius_m:
+    type: double
+    default_value: 0.400
+    description: "Camera reach / centre-of-gravity ceiling."
+  posture_cam_min_radius_m:
+    type: double
+    default_value: 0.0
+    description: "Camera radius floor applied inside the frontal sector; 0 disables."
+    validation:
+      gt_eq: [0.0]
+  posture_cam_frontal_sector_rad:
+    type: double
+    default_value: 0.0
+    description: "Half-width of the frontal sector the radius floor applies in; 0 means everywhere."
+    validation:
+      gt_eq: [0.0]
+  posture_cam_frontal_taper_rad:
+    type: double
+    default_value: 0.0
+    description: "Width of the linear taper outside the sector; 0 keeps the hard edge."
+    validation:
+      gt_eq: [0.0]
+  posture_cam_floor_distance_near_m:
+    type: double
+    default_value: 0.50
+    description: "Target distance at which the radius floor is full."
+  posture_cam_floor_distance_far_m:
+    type: double
+    default_value: 1.00
+    description: "Target distance at which the radius floor fades to zero; <= near disables the fade."
+  posture_joint_margin:
+    type: double
+    default_value: 0.150
+    description: "How far inside the joint limits the solver may go."
+    validation:
+      gt_eq: [0.0]
+  posture_cond_max:
+    type: double
+    default_value: 50.0
+    description: "Jacobian condition number above which a candidate is rejected."
+  posture_trace:
+    type: bool
+    default_value: false
+    description: "Diagnostics only: trace why each tick's wrist branch was chosen."
+  posture_aim_tol_rad:
+    type: double
+    default_value: 0.035
+    description: "Aim error that counts as centred."
+  posture_max_overrun_us:
+    type: double
+    default_value: 4000.0
+    description: "Wall-clock budget for one solve; overrun holds the previous pose."
+
+  # ---- preposition (MoveGroup) ----
+  preposition_enable:
+    type: bool
+    default_value: true
+    description: "Enable the MoveGroup pre-position before takeover."
+  preposition_joint_delta_rad:
+    type: double
+    default_value: 0.15
+    description: "Criterion 1: any joint further than this from the family posture."
+  preposition_branch_delta_rad:
+    type: double
+    default_value: 1.571
+    description: "Criterion 2: |dq5| beyond this means the wrong wrist branch."
+  preposition_limit_margin_rad:
+    type: double
+    default_value: 0.10
+    description: "Criterion 3: closer than this to a joint limit."
+  preposition_tcp_distance_m:
+    type: double
+    default_value: 0.05
+    description: "Criterion 4a: TCP translation that requires a replan."
+  preposition_tcp_angle_rad:
+    type: double
+    default_value: 0.15
+    description: "Criterion 4b: TCP rotation that requires a replan."
+  preposition_velocity_scaling:
+    type: double
+    default_value: 0.3
+    description: "MoveGroup velocity scaling for the pre-position."
+    validation:
+      gt_eq: [0.0]
+  preposition_accel_scaling:
+    type: double
+    default_value: 0.5
+    description: "MoveGroup acceleration scaling for the pre-position."
+    validation:
+      gt_eq: [0.0]
+  preposition_tolerance_rad:
+    type: double
+    default_value: 0.02
+    description: "Joint tolerance that counts as having reached the pre-position."
+    validation:
+      gt_eq: [0.0]
+  preposition_timeout_s:
+    type: double
+    default_value: 10.0
+    description: "MoveGroup pre-position timeout."
+    validation:
+      gt_eq: [0.0]
+
+  # ---- solver selection and QP weights (read only in pinned_posture) ----
+  robot_description:
+    type: string
+    default_value: ""
+    description: "URDF used to build the pinned-posture / QP kinematics."
+  lookat_solver:
+    type: string
+    default_value: "dls"
+    description: "Look-at solver: 'dls' (pinned posture) or 'qp'."
+  qp_w_aim:
+    type: double
+    default_value: 1.0
+    description: "QP weight on the aim error."
+  qp_w_smooth:
+    type: double
+    default_value: 0.01
+    description: "QP weight on the step size (smoothness)."
+  qp_w_posture:
+    type: double
+    default_value: 0.001
+    description: "QP weight pulling the joints back to the reference posture."
+  qp_j5_branch_min_rad:
+    type: double
+    default_value: 0.50
+    description: "Smallest |j5| the QP may use; below it the solver stalls at the reference."
+  qp_cond_max_relaxed:
+    type: double
+    default_value: 70.0
+    description: "Condition number allowed by the relaxed tier."
+  qp_relaxed_min_azimuth_rad:
+    type: double
+    default_value: 2.4434609528
+    description: "Target azimuth (rad) beyond which the relaxed tier applies."
+  qp_joint_margin_rad:
+    type: double
+    default_value: 0.20
+    description: "Joint-limit margin used by the QP box constraints."
+    validation:
+      gt_eq: [0.0]
+  qp_j5_branch_max_rad:
+    type: double
+    default_value: 0.95
+    description: "Largest |j5| the QP may use."
+  qp_prefer_positive_branch:
+    type: bool
+    default_value: true
+    description: "Prefer the positive j5 branch as the warm start."
+  qp_max_linearizations:
+    type: int
+    default_value: 8
+    description: "SQP outer iterations per solve (measured: 12 is where coverage saturates)."
+    validation:
+      gt_eq: [1]
+  qp_w_radius:
+    type: double
+    default_value: 0.0
+    description: "Weight on the soft camera-radius term; 0 disables it."
+    validation:
+      gt_eq: [0.0]
+  qp_radius_near_m:
+    type: double
+    default_value: 0.280
+    description: "Target camera radius at 0 deg depression."
+  qp_radius_steep_m:
+    type: double
+    default_value: 0.380
+    description: "Target camera radius at 90 deg depression."
+  qp_radius_side_m:
+    type: double
+    default_value: 0.25
+    description: "Target camera radius outside the frontal sector."
+
+  # ---- effective control gain of the published target ----
+  arm_source_scale:
+    type: double
+    default_value: 1.0
+    description: "Scale applied to the published arm-base target. Old arm tier used 0.7; 1.0 is the 2026-11-13 design default pending bench revalidation."
+
+  # ---- tracker liveness ----
+  tracker_stream_timeout_ms:
+    type: int
+    default_value: 500
+    description: "A tracker stream silent for longer than this is considered gone."
+
+  # ---- scanning (SCANNING state) ----
+  auto_scan:
+    type: bool
+    default_value: true
+    description: "Enter SCANNING when the active target list stays empty."
+  scan_start_delay_ms:
+    type: int
+    default_value: 500
+    description: "How long the list must stay empty before scanning."
+  auto_resume_on_target:
+    type: bool
+    default_value: true
+    description: "Resume TRACKING from HOLD when a drivable target appears."
+  scan_require_base_static:
+    type: bool
+    default_value: true
+    description: "Refuse to scan unless the platform is stationary."
+  scan_presettle_gap_rad:
+    type: double
+    default_value: 0.15
+    description: "Command-vs-real gap the arm must close before the scan ingress move (independent of the recovery one)."
+    validation:
+      gt_eq: [0.0]
+  # Wrist-only Lissajous scan (2026-11-15 rev4): j1 pinned, j2/j3 at the
+  # observation posture, j4 pans, j5 tilts, j6 held.
+  scan_j1_rad:
+    type: double
+    default_value: 0.0
+    description: "Sway centre for j1."
+  scan_j1_radius_rad:
+    type: double
+    default_value: 0.349
+    description: "j1 sway amplitude (+-20 deg), one cycle per circle."
+  scan_j2_rad:
+    type: double
+    default_value: 0.89
+    # 2026-11-19: 允许与 posture_j2_nominal_rad 解耦。扫描姿态刻意把肩部
+    # 俯仰抬高(运行时值见 servo_node.yaml), 让相机视角更朝地面。
+    description: "Scan posture j2 (defaults to posture_j2_nominal_rad; the shipped value in servo_node.yaml is deliberately higher)."
+  scan_j3_rad:
+    type: double
+    default_value: -0.72
+    description: "Observation posture (posture_j3_rad)."
+  scan_j4_radius_rad:
+    type: double
+    default_value: 1.2
+    description: "Circle radius on j4 (+-69 deg) around the observation pose."
+  scan_j5_radius_rad:
+    type: double
+    default_value: 1.1
+    description: "Circle radius on j5 (+-63 deg); the joint limit is +-70 deg."
+  scan_period_s:
+    type: double
+    default_value: 8.0
+    description: "Time for one full circle."
+  # One JointTrajectory holds several whole figures.
+  scan_traj_duration_s:
+    type: double
+    default_value: 60.0
+    description: "Length of one published trajectory (snapped to whole figures)."
+  scan_traj_sample_rate_hz:
+    type: double
+    default_value: 50.0
+  scan_traj_max_velocity_rad_s:
+    type: double
+    default_value: 2.5
+    description: "Hard limit; a figure that would exceed it is stretched in time."
+  scan_hold_s:
+    type: double
+    default_value: 0.20
+    description: "Constant-pose trajectory that stops the scan on target/abort."
+  scan_roll_lock_enable:
+    type: bool
+    default_value: true
+    description: "Use j6 to keep the camera image upright while j4/j5 move."
+  # Startup check: FK + arm_calibration.json (control law) vs the TF chain
+  # (tracker).  A mismatch means both sides see different models.
+  camera_tf_check_enable:
+    type: bool
+    default_value: true
+  camera_tf_frame:
+    type: string
+    default_value: "camera_arm_color_optical_frame"
+  camera_tf_pos_tol_m:
+    type: double
+    default_value: 0.01
+  camera_tf_ang_tol_rad:
+    type: double
+    default_value: 0.0175
+  scan_velocity_scaling:
+    type: double
+    default_value: 0.15
+    description: "Ingress (MoveGroup) only; the sweep ignores the planner."
+  scan_accel_scaling:
+    type: double
+    default_value: 0.2
+  scan_tolerance_rad:
+    type: double
+    default_value: 0.02
+
+  # ---- control law ----
+  kp_pos:
+    type: double
+    default_value: 2.0
+    description: "Proportional gain on position error."
+    validation:
+      gt_eq: [0.0]
+  kp_ang:
+    type: double
+    default_value: 3.0
+    description: "Proportional gain on orientation error."
+    validation:
+      gt_eq: [0.0]
+  v_max:
+    type: double
+    default_value: 0.15
+    description: "Linear velocity clamp; 0 disables the clamp."
+    validation:
+      gt_eq: [0.0]
+  w_max:
+    type: double
+    default_value: 0.6
+    description: "Angular velocity clamp; 0 disables the clamp."
+    validation:
+      gt_eq: [0.0]
+  deadband_pos_m:
+    type: double
+    default_value: 0.01
+    description: "Position error below this produces no command."
+    validation:
+      gt_eq: [0.0]
+  deadband_ang_rad:
+    type: double
+    default_value: 0.034906585
+    description: "Orientation error below this produces no command."
+    validation:
+      gt_eq: [0.0]
+  lowpass_cutoff_hz:
+    type: double
+    default_value: 8.0
+    description: "Cutoff of the setpoint low-pass."
+    validation:
+      gt_eq: [0.0]
+  v_max_total:
+    type: double
+    default_value: 1.2
+    description: "Clamp on the combined linear velocity (position + feed-forward)."
+    validation:
+      gt_eq: [0.0]
+  w_max_total:
+    type: double
+    default_value: 1.6
+    description: "Clamp on the combined angular velocity (position + feed-forward)."
+    validation:
+      gt_eq: [0.0]
+  kd_pos:
+    type: double
+    default_value: 0.30
+    description: "Derivative gain on measured velocity, position part; 0 disables damping."
+    validation:
+      gt_eq: [0.0]
+  kd_ang:
+    type: double
+    default_value: 0.30
+    description: "Derivative gain on measured velocity, orientation part; 0 disables damping."
+    validation:
+      gt_eq: [0.0]
+
+  # ---- reference-velocity feed-forward ----
+  ff_enable:
+    type: bool
+    default_value: true
+    description: "Add the filtered setpoint derivative to the command."
+  ff_lowpass_hz:
+    type: double
+    default_value: 8.0
+    description: "Cutoff of the feed-forward low-pass."
+    validation:
+      gt_eq: [0.0]
+  ff_deadband_mps:
+    type: double
+    default_value: 0.01
+    description: "Feed-forward linear velocity below this is dropped."
+    validation:
+      gt_eq: [0.0]
+  ff_deadband_radps:
+    type: double
+    default_value: 0.01
+    description: "Feed-forward angular velocity below this is dropped."
+    validation:
+      gt_eq: [0.0]
+  ff_max_mps:
+    type: double
+    default_value: 0.60
+    description: "Feed-forward linear velocity clamp."
+    validation:
+      gt_eq: [0.0]
+  ff_max_radps:
+    type: double
+    default_value: 0.80
+    description: "Feed-forward angular velocity clamp."
+    validation:
+      gt_eq: [0.0]
+
+  # ---- observation floor ----
+  min_observe_distance_m:
+    type: double
+    default_value: 0.20
+    description: "Target XoY distance to the arm base; below this the servo HOLDs (hold_reason=too_close)."
+
+  # ---- HOLD recovery ----
+  hold_recovery_enable:
+    type: bool
+    default_value: true
+    description: "Enable automated recovery from HOLD."
+  recovery_allow_target_lost:
+    type: bool
+    default_value: false
+    description: "Allow recovery when the target itself was lost."
+  recovery_max_attempts:
+    type: int
+    default_value: 1
+    description: "Maximum recovery attempts; 0 means no cap."
+    validation:
+      gt_eq: [0]
+  recovery_deadline_ms:
+    type: int
+    default_value: 8000
+    description: "Cancel an in-flight recovery after this long; 0 disables the deadline."
+    validation:
+      gt_eq: [0]
+  recovery_geometry_max_age_ms:
+    type: int
+    default_value: 1500
+    description: "Maximum age of the geometry a recovery plans against."
+  follow_recovery_timeout_ms:
+    type: int
+    default_value: 3000
+    description: "How long a follower-lag recovery waits for the arm to catch up."
+  recovery_retry_cooldown_ms:
+    type: int
+    default_value: 2000
+    description: "Minimum gap between two recovery attempts."
+  recovery_velocity_scaling:
+    type: double
+    default_value: 0.30
+    description: "MoveGroup velocity scaling for a recovery move."
+    validation:
+      gt_eq: [0.0]
+  recovery_accel_scaling:
+    type: double
+    default_value: 0.50
+    description: "MoveGroup acceleration scaling for a recovery move."
+    validation:
+      gt_eq: [0.0]
+  recovery_timeout_s:
+    type: double
+    default_value: 8.0
+    description: "Wall-clock timeout of a recovery MoveGroup goal."
+    validation:
+      gt_eq: [0.0]
+  recovery_tolerance_rad:
+    type: double
+    default_value: 0.02
+    description: "Joint tolerance that counts as recovery success."
+    validation:
+      gt_eq: [0.0]
+  recovery_settle_ms:
+    type: int
+    default_value: 200
+    description: "Wait after the recovery goal completes before sampling the pose."
+    validation:
+      gt_eq: [0]
+  recovery_presettle_gap_rad:
+    type: double
+    default_value: 0.005
+    description: "Command-vs-real gap the arm must close before the recovery goal is sent."
+    validation:
+      gt_eq: [0.0]
+  recovery_presettle_timeout_ms:
+    type: int
+    default_value: 3000
+    description: "How long to wait for that gap before giving up."
+  recovery_presettle_stable_ms:
+    type: int
+    default_value: 250
+    description: "How long the gap must stay closed before the goal is sent."
+  follow_resume_gap_rad:
+    type: double
+    default_value: 0.10
+    description: "Gap below which a follower-lag recovery may resume."
+    validation:
+      gt_eq: [0.0]
+  follow_resume_stable_ms:
+    type: int
+    default_value: 300
+    description: "How long the gap must stay below that before resuming."

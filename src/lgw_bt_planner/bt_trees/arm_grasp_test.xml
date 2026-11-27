@@ -1,0 +1,185 @@
+<!--
+  arm_grasp_test.xml — 只测机械臂抓取, 不做导航/放置/卸货 (2026-11-20).
+
+  用途: 单独验证 "站立->趴下 + 采样式位姿生成 + MoveIt 执行 + 夹爪力判定"
+  这一段链路。狗由操作员手动摆到目标附近(走到哪一步由人负责), 但站立 /
+  平衡站立 / 趴下 / 步态由树负责(2026-11-20 用户要求: 进入验证阶段前
+  需要平衡站立且趴下)。
+
+  流程:
+    init : 开夹爪 -> 臂回 home -> StandUp -> BalanceStand -> classic_walk
+           -> 接管伺服(进入 SCANNING/TRACKING)
+    loop : 等选中目标进入 XoY <= 0.55 m
+           -> BalanceStand -> 停伺服 -> 臂回 home(安全) -> StandDown(趴下)
+           -> 重新接管伺服 -> 沉降 -> 验证(arm 命中, 趴下 + 伺服注视)
+           -> 停伺服 -> 采样式位姿生成 -> 预抓取 -> 抓取 -> 合爪(力判定)
+           -> 退回预抓取位 -> 回 home -> 消费目标
+           -> StandUp -> BalanceStand -> classic_walk -> 松开夹爪
+           -> 重新接管伺服, 等下一个目标
+    失败 : absent / camera_dead —— 开夹爪 + 收臂 + 站起 + 恢复步态 + 重新接管。
+           趴着不能走, 所以任何离开趴下姿态的路径都必须先 StandUp 再发步态。
+
+  真机注意: 不做放置和卸货; 目标从哪来、狗朝哪走仍由操作员负责。
+-->
+<root BTCPP_format="4" main_tree_to_execute="ArmGraspTest">
+  <BehaviorTree ID="ArmGraspTest">
+    <Sequence name="init_then_loop">
+      <!-- 开夹爪: 上一次抓取可能闭着。
+           ForceSuccess: 驱动刚起时 /feedback/gripper_status 可能还没到, 这个
+           节点会直接 FAILURE; 那是启动竞态, 不该把整棵树干掉(2026-11-20
+           真机: 发 goal 时驱动刚起 14 s, init 第一个节点就挂了)。 -->
+      <ForceSuccess>
+        <ControlGripper target_width="0.1"/>
+      </ForceSuccess>
+      <!-- 释放上一轮遗留的选中目标(action=4, id=0): tracker 选目标是粘性的,
+           残留的远目标会让 init 接管的 preposition 解不出注视位姿(QP
+           "no legal pose")。释放后 tracker 重新挑当前最合适的。 -->
+      <ForceSuccess>
+        <MarkTrack track_id="0" action="4"/>
+      </ForceSuccess>
+      <MoveArmToNamed named_target="home" named_targets="{@named_targets}"/>
+      <!-- Go2 初始化(2026-11-20 用户要求): 树自己负责把狗摆到"站立 + 平衡
+           站立 + 有步态"。顺序不能反——BalanceStand 会清掉步态标志, 必须
+           之后重发 classic_walk; 趴着/坐着直接发步态会被固件静默丢弃。 -->
+      <StandUp/>
+      <BalanceStand/>
+      <SwitchGait gait_name="classic_walk" enable="true"/>
+      <!-- 伺服接管: 让臂相机开始跟踪选中的目标, 后面的 arm 命中验证依赖它。
+           ForceSuccess: 当前选中目标可能还在远处, preposition 解不出姿态时
+           接管会被拒; 趴下之后还有一次接管(见 present)。 -->
+      <ForceSuccess><ServoTakeover/></ForceSuccess>
+
+      <Repeat num_cycles="-1">
+        <Fallback name="target_or_idle">
+          <Sequence name="target_task">
+            <IsTargetAvailable max_age_ms="1000" track_id="{track_id}"/>
+            <!-- 只看距离; 方位判据保留在节点里(max_azimuth_rad=0 关闭) -->
+            <WaitUntilTargetNear min_xy_m="0.0" max_xy_m="0.55"
+                                 max_azimuth_rad="0.0"
+                                 timeout_ms="120000"/>
+
+            <Fallback name="verify">
+              <Sequence name="present">
+                <!-- 2026-11-20 用户要求: 进入验证阶段前先平衡站立、再趴下。
+                     趴下后臂基座整体降低, 地面目标相对臂基座的高度差变小,
+                     可达性更好; arm 命中验证也在趴下姿态下采集, 这样验证
+                     通过的"注视姿态"和后续采样/规划在同一个躯体姿态下。 -->
+                <BalanceStand/>
+                <!-- 硬件安全: 趴下时躯体下降约 0.2 m, 臂若还伸在外面会戳到
+                     地面。先释放伺服(不让 TRACKING 继续往地面压), 再把臂
+                     收回 home, 然后才 StandDown。 -->
+                <ForceSuccess><ServoRelease/></ForceSuccess>
+                <!-- 释放后等关节停稳再规划(2026-11-20 真机: release 后 0.5 s
+                     就发 home, MoveGroup 返回 -4 起点偏差 0.016 rad)。 -->
+                <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+                <ForceSuccess>
+                  <MoveArmToNamed named_target="home"
+                                  named_targets="{@named_targets}"/>
+                </ForceSuccess>
+                <StandDown/>
+                <!-- 趴下后重新接管伺服: 臂基座已降低, 让臂相机在新姿态下
+                     重新瞄准目标, 然后才做 arm 命中验证。 -->
+                <ServoTakeover/>
+                <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+
+                <!-- 清当前目标的 arm 命中历史 -->
+                <ForceSuccess>
+                  <MarkTrack track_id="{track_id}" action="5"/>
+                </ForceSuccess>
+
+                <!-- 验证: 伺服 TRACKING + 臂相机正对目标时采 3 次命中 -->
+                <WaitForArmHits min_hits="3" timeout_ms="5000"/>
+
+                <!-- 把控制权从伺服交给 MoveIt; 等关节停稳再规划(防 -4) -->
+                <ForceSuccess><ServoRelease/></ForceSuccess>
+                <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+
+                <!-- 采样式位姿生成: pitch 网格 x yaw 扰动 -> /compute_ik
+                     (对 link6 求, 位姿已扣 12 cm) -> 前 K 个 plan_only -->
+                <ComputeGraspPosesSampled
+                    pre_grasp_distance_m="0.25"
+                    pitch_deg_list="0;15;30;45;60;75;90;105;120;135;150"
+                    yaw_offsets_deg="0;15;-15;30;-30;45;-45"
+                    ik_timeout_ms="60"
+                    plan_check_k="2"
+                    plan_timeout_ms="1000"/>
+
+                <MoveArmToPose goal="{pre_grasp_pose}"/>
+                <MoveArmToPose goal="{grasp_pose}"/>
+                <!-- 合爪: 没建立接触力就是没夹到 -> FAILURE -->
+                <ControlGripper target_width="0.0" max_force="1.0"
+                                require_force="true"/>
+                <MoveArmToPose goal="{pre_grasp_pose}"/>
+                <MoveArmToNamed named_target="home"
+                                named_targets="{@named_targets}"/>
+
+                <!-- 抓到手 -> 消费目标 -->
+                <ForceSuccess>
+                  <MarkTrack track_id="{track_id}" action="1"/>
+                </ForceSuccess>
+
+                <!-- 抓取是在趴下姿态里完成的, 必须站起才能继续/行走。
+                     BalanceStand 会清掉步态标志, 紧接着重发 classic_walk
+                     (顺序不能反)。 -->
+                <StandUp/>
+                <BalanceStand/>
+                <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                <SwitchGait gait_name="classic_walk" enable="true"/>
+
+                <!-- 测试用: 直接松开夹爪放下, 不做放置/卸货 -->
+                <ControlGripper target_width="0.1"/>
+                <!-- 重新接管伺服, 等下一个目标 -->
+                <ServoTakeover/>
+              </Sequence>
+
+              <!-- 失败恢复: 开夹爪 + 收臂 + 站起 + 恢复步态 + 重新接管 -->
+              <Sequence name="absent">
+                <IsArmCameraAlive max_age_ms="500"/>
+                <!-- 先释放伺服再让 MoveIt 动臂: 伺服在 TRACKING 时收到
+                     MoveGroup 动作会转 HOLD(busy=1), 而 ServoTakeover 只接受
+                     IDLE -> HOLD 状态下接管被永久拒绝, 臂锁死在最后姿态。
+                     (2026-11-20 真机, 表现就是"机械臂卡在 home") -->
+                <ForceSuccess><ServoRelease/></ForceSuccess>
+                <!-- release 不取消 HOLD 恢复的 bounded move, 留沉降再让 MoveIt 动 -->
+                <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+                <ForceSuccess><ControlGripper target_width="0.1"/></ForceSuccess>
+                <ForceSuccess>
+                  <MoveArmToNamed named_target="home"
+                                  named_targets="{@named_targets}"/>
+                </ForceSuccess>
+                <ForceSuccess>
+                  <MarkTrack track_id="{track_id}" action="2"/>
+                </ForceSuccess>
+                <!-- 失败发生在趴下姿态里, 趴着不能走 -> 先站起再恢复步态。 -->
+                <StandUp/>
+                <BalanceStand/>
+                <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                <SwitchGait gait_name="classic_walk" enable="true"/>
+                <ForceSuccess><ServoTakeover/></ForceSuccess>
+              </Sequence>
+
+              <Sequence name="camera_dead">
+                <ForceSuccess><ServoRelease/></ForceSuccess>
+                <Delay delay_msec="800"><AlwaysSuccess/></Delay>
+                <ForceSuccess>
+                  <MoveArmToNamed named_target="home"
+                                  named_targets="{@named_targets}"/>
+                </ForceSuccess>
+                <!-- 同上: 先收臂, 再从趴下站起, 恢复步态后再失败。 -->
+                <StandUp/>
+                <BalanceStand/>
+                <Delay delay_msec="1500"><AlwaysSuccess/></Delay>
+                <SwitchGait gait_name="classic_walk" enable="true"/>
+                <ForceSuccess><ServoTakeover/></ForceSuccess>
+                <AlwaysFailure/>
+              </Sequence>
+            </Fallback>
+          </Sequence>
+
+          <!-- 没目标就空转一轮 -->
+          <AlwaysSuccess/>
+        </Fallback>
+      </Repeat>
+    </Sequence>
+  </BehaviorTree>
+</root>

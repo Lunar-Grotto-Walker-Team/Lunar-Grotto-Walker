@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  head_arm_independent_lookat.xml — 与 head_to_arm_verify_grasp.xml 同源,
+  但完全去掉 head/arm 一致性核实 + head_target step。改为 3 阶段
+  Sequence(lookat → arm_target → return home),逐步用同一份 lookat
+  姿态把 tcp 推到不同视角算出的目标点上,让用户在同一姿态下横向对比
+  "arm 视角下算到的目标点" 与真实木块位置,定位 arm→tcp→world 这条
+  链路的系统偏差。
+
+  启动方式:与 verify_grasp 变种一致 —— BT runner 加载 XML 后立即循环,
+  不需要 send_goal 也不需要 /bt_user_input 触发;Ctrl-C start 脚本终止。
+
+  循环前 warm-up:Repeat 之外的 <MoveArmToNamed gripper_open> 把夹爪
+  打开一次(arm 一起到 gripper_open 命名姿态)。如果 send_goal 时
+  MoveGroup 已经起来并响应,这一步 SUCCESS;若 IK 失败(arm 在奇异
+  姿态),用 ForceSuccess 包一下,让 BT 仍能进 Repeat(夹爪可能
+  关着,后续看是否需要单独 retry)。
+
+  每轮循环执行(全部失败都走 ForceSuccess → Sequence 仍能推进):
+    step 1: head 看到目标
+              → SetBodyPose tilt_forward_down (pitch=+0.30)
+                让 dog 前倾 17°,bridge 启动 50Hz Euler refresh 把
+                pitch 持续 latch 在 firmware 上(参见 go2_posture_demo
+                v7 设计 — 2026-10-13 移除 body_h 后 refresh 退化为
+                Euler-only)。本轮"tilt + lookat + arm_target"实验的
+                基础姿态:后续 arm 运动都在前倾 body 上做,用于诊断
+                arm→world 链路在 body pitch 偏置下的误差。
+              → Sleep 2s 等 dog 物理上稳到目标 pitch
+              → ComputeLookatPose 以 head_obs 为输入算出 lookat_pose
+                (2026-10-10 改:不再用硬编码 anchor,改 xoy-orbit 目标驱动选位:
+                   P_ee.x = d_xoy · P_target.x / r_xy
+                   P_ee.y = d_xoy · P_target.y / r_xy
+                   P_ee.z = z_fixed (= 0.3)
+                 其中 d_xoy=0.4(obs 距 base 在 xoy 平面的固定半径),
+                 r_xy=‖(P_target.x, P_target.y)‖,z_fixed=0.3(obs 高度)。
+                 当 target=(0.5,0,0.3) 时退化为旧 (0.4,0,0.2) 行为;
+                 target 偏左前时 obs 沿同一方向偏,arm 跟着 target 转。
+                 姿态仍由 obs→target 决定,跟旧 lookat 路径一致。
+                 r_xy≈0(target 在 base 正上方)→ 退化到 ee_position_world 兜底。
+                 注意:ComputeLookatPose 用的是 step1 IsHeadDetectionConfirmed
+                 缓存的 last_head_obs(tilt 之前的观测);tilt 之后 head 视角
+                 已经改变,我们不重新检测 head,直接用 tilt 前的 obs 算
+                 lookat_pose。tilt 期间观测稳定(目标没动),后续 arm 视角
+                 重新检测用 arm 自己的 obs。)
+              → MoveArmToPose 把 tcp 推到 lookat_pose
+              这是整轮实验的 "基准姿态":arm step 复用它的 .orientation,
+              只换 .position。
+              (2026-10-10 临时回退:之前 2026-10-09 改的 SelectArmObservationPose
+              + head_target_world 自适应选位路径在真机发现 head 深度估计 z
+              系统性偏低(实测 target.z ≈ -0.33,anchor 真实物体应在 z≈+0.3
+              桌面),SelectArmObservationPose 把 arm cam 拉到 z=-0.07"贴地"位置,
+              与 head cam 撞。先退回硬编码 anchor 这条老路径做隔离,把 perception
+              z bias 修好再切回自适应。)
+    step 2: Sleep 1s 等 arm 相机在 step1 移动后的新视角下稳定,然后
+              用 arm 视角算出的目标点,姿态仍然保持 step1 的 lookat
+              (dog 仍在前倾 30°,bridge refresh 持续)
+              → IsArmDetectionConfirmed 读 arm 观测
+              → ComputeArmTargetWorld(arm obs, tcp_pose=lookat_pose) →
+                arm_target_world(tcp_pose 用 step1 ComputeLookatPose 写
+                出的 lookat_pose,而不是 MoveArmToPose 后才有的
+                actual_tcp_pose。这样即使 step 1 MoveArmToPose 失败,
+                step 2 也能拿到 tcp_pose_in_world,不再 WARN
+                "Missing tcp_pose_in_world"。代价:arm_target_world
+                会带 1-5cm IK 误差 + 8-35cm Phase-A 目标复用误差,
+                与本变种"诊断 arm→world 链路误差"的目的无关
+                (本变种用 lookat_pose 作为 ground truth)。
+              → MakePoseFromPointAndReference(point=arm_target_world,
+                reference_pose=lookat_pose) → arm_pose
+              → MoveArmToPose
+    step 3: 无论前 2 步如何,夹爪闭合 → 取消前倾 → 回 home
+              → MoveArmToNamed gripper_close (best effort,失败跳过)
+              → SetBodyPose clear=true (cancel bridge HOLDING, dog 回中立)
+              → MoveArmToNamed return_home
+
+  与 verify_grasp 的关键差异(决定性):
+    - 没有 VerifyHeadArmConsistency,也不再需要 max_distance_m threshold。
+    - 没有 head_target step(本变种只定位 arm→world 误差,不再
+      单独抵达 head 视角下的目标点)。
+    - 整轮 2 次到达(lookat / arm_target)全程共享同一份 .orientation,
+      所以 tcp 姿态在 2 个 step 之间不变;用户只需看 .position 的
+      命中误差。
+    - arm step 用的 tcp_pose_in_world 是 lookat_pose(step1 ComputeLookatPose
+      写出的规划目标),不是 MoveArmToPose 后才有的 actual_tcp_pose。本变种
+      不依赖 step 1 MoveArmToPose 成功;即使 IK 失败,step 2 也能拿到
+      tcp_pose_in_world。
+
+  Pose literal / named_target / world frame 约定同 verify_grasp 变种。
+-->
+<root BTCPP_format="4" main_tree_to_execute="HeadArmIndependentLookat">
+  <BehaviorTree ID="HeadArmIndependentLookat">
+    <!-- warm-up + Repeat 必须包在 1 个 child 里(BehaviorTree 根只能 1 child),
+         用 Sequence 把它们串起来。Sequence 先做 warm-up(gripper_open),
+         再进 Repeat 无限循环。warm-up 失败也走 ForceSuccess,Sequence 继续。 -->
+    <Sequence name="warm_up_then_loop">
+      <!-- warm-up:循环前把夹爪打开(arm 一起到 gripper_open 命名姿态)。
+           失败 → ForceSuccess,仍然进 Repeat(后面每轮 ReturnHome 会重置)。 -->
+      <Fallback name="pre_loop_open_gripper">
+        <Sequence name="pre_loop_open_gripper_step">
+          <MoveArmToNamed name="pre_loop_open" named_target="gripper_open"
+            named_targets="{@named_targets}"/>
+        </Sequence>
+        <ForceSuccess name="pre_loop_open_gripper_skip">
+          <AlwaysSuccess/>
+        </ForceSuccess>
+      </Fallback>
+
+      <Repeat name="auto_loop" num_cycles="-1">
+      <Sequence name="lookat_visit_cycle">
+        <!-- step 0: 每轮循环开始前先 ensure 夹爪打开。必要性:
+             - 上轮 close 后,如果 user 不发 /bt_user_input,release 整步
+               (WaitForUserInput FAILURE → ForceSuccess skip) 被跳过,
+               夹爪保持关闭 —— 此时直接进 lookat_step / arm_target_step
+               移动 tcp 到新目标点,夹爪还关着。如果上轮 close 后没
+               抓到 object,问题不大(空夹);如果抓到了,新轮 pick 时
+               旧 object 还会卡在夹爪里,arm 在观测姿态下被旧 object 干扰。
+             - 把 MoveArmToNamed gripper_open 放在每轮头部,等价于
+               "循环开始时强制 reset 夹爪状态":开已开的 = no-op,
+               开关着的 = drop 上轮残留 object(若有)然后开。代价:
+               没有 user 发布时,object 在 home 位置被 drop 而非 release_pose,
+               但本变种本来就没承诺 unattended release 语义。
+             best-effort 包 Fallback + ForceSuccess,跟 pre_loop_open_gripper
+             (循环前 warm-up) 对称 —— IK 失败不挡循环。 -->
+        <Fallback name="if_per_cycle_open_gripper">
+          <Sequence name="per_cycle_open_gripper_step">
+            <MoveArmToNamed name="per_cycle_open" named_target="gripper_open"
+              named_targets="{@named_targets}"/>
+          </Sequence>
+          <ForceSuccess name="per_cycle_open_gripper_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+
+        <!-- step 1: head obs → xoy-orbit lookat → 走过去
+                     (2026-10-10 改造:ComputeLookatPose 加 xoy_distance_m +
+                     z_fixed_m 两个 port,启用目标驱动选位:
+                       P_ee.x = d_xoy · P_target.x / r_xy
+                       P_ee.y = d_xoy · P_target.y / r_xy
+                       P_ee.z = z_fixed
+                     d_xoy=0.4 obs 距 base 在 xoy 平面的固定半径,
+                     z_fixed=0.3 obs 高度,ee_position_world="0.4;0.0;0.2" 作
+                     r_xy≈0 / parse 失败兜底(此 anchor 即 xoy-orbit 启用前
+                     用户最近一次稳定 anchor,退化行为字节级回退)。
+                     target=(0.5,0,0.3) 时退化为旧 (0.4,0,0.2) 行为;
+                     target 偏左前时 obs 沿同一方向偏,arm 跟着 target 转。
+                     姿态仍由 obs→target 决定,跟旧 lookat 路径一致。
+                     之前 2026-10-09 改的 ComputeHeadTargetWorld +
+                     SelectArmObservationPose 自适应选位路径在真机发现 head
+                     深度 z 系统性偏低,把 arm 拉到"贴地"位置与 head cam 撞,
+                     那条路径已废弃。) -->
+        <Fallback name="if_lookat_computable">
+          <Sequence name="lookat_step">
+            <IsHeadDetectionConfirmed name="check_head_for_lookat"
+              topic_name="/perception/two_stage/camera_head/result"
+              max_age_sec="0.3"
+              last_observation="{last_head_obs}"/>
+
+            <!-- 2026-10-10 debug:perception 链路不稳,先把 SetBodyPose tilt + Sleep
+                  settle 注释,跳过前倾步骤,直接进入 compute_lookat。等 head/arm
+                  检测稳定后再加回来。
+                  2026-10-13 v7:body_height 字段从 .srv 移除,下面的 body_height /
+                  tolerance_body_h 属性也对应去掉。 -->
+            <!--
+            <SetBodyPose name="tilt_forward_down"
+                         roll="0.0" pitch="0.30" yaw="0.0"
+                         tolerance_rpy="0.05"/>
+            <Sleep name="settle_tilt" msec="2000"/>
+            -->
+
+            <ComputeLookatPose name="compute_lookat"
+              head_observation="{last_head_obs}"
+              xoy_distance_m="0.4"
+              z_fixed_m="0.3"
+              ee_position_world="0.4;0.0;0.2"
+              world_frame="world"
+              output_pose_key="lookat_pose"/>
+
+            <MoveArmToPose name="move_to_lookat_pose" goal="{lookat_pose}"
+              planning_time="5.0" pos_box="0.001;0.001;0.001"/>
+          </Sequence>
+          <ForceSuccess name="lookat_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+
+        <!-- step 2: 同姿态 → arm 视角算的目标点
+                     前置 Sleep 1s 让 arm 相机在 step1 移动后的新
+                     视角下把 depth buffer 填充满,避免 verify_grasp 阶段
+                     已经观察到的 P_arm_world 帧间散射问题。
+                     tcp_pose_in_world 用 lookat_pose(step1 ComputeLookatPose
+                     输出的规划目标,黑板上一定有),不依赖 step1 MoveArmToPose
+                     成功。这样即使 step 1 MoveArmToPose 失败,step 2 也能
+                     拿到 tcp_pose_in_world,不再 WARN "Missing tcp_pose_in_world"。
+                     代价:arm_target_world 会带 1-5cm IK 误差 + 8-35cm
+                     Phase-A 目标复用误差 —— 本变种用 lookat_pose 作为
+                     ground truth 诊断 arm→world 链路误差,这部分误差
+                     与诊断目的无关。 -->
+        <Fallback name="if_arm_target_reachable">
+          <Sequence name="arm_target_step">
+            <Sleep name="settle_arm_camera" msec="1000"/>
+
+            <IsArmDetectionConfirmed name="check_arm_for_target"
+              topic_name="/perception/two_stage/camera_arm/result"
+              max_age_sec="0.3"
+              last_observation="{last_arm_obs}"/>
+
+            <ComputeArmTargetWorld name="project_arm_to_world"
+              arm_observation="{last_arm_obs}"
+              tcp_pose_in_world="{lookat_pose}"
+              output_key="arm_target_world"/>
+
+            <MakePoseFromPointAndReference name="arm_compose_pose"
+              point="{arm_target_world}"
+              reference_pose="{lookat_pose}"
+              world_frame="world"
+              output_key="arm_pose"/>
+
+            <MoveArmToPose name="move_to_arm_target" goal="{arm_pose}"
+              planning_time="5.0" pos_box="0.001;0.001;0.001"/>
+          </Sequence>
+          <ForceSuccess name="arm_target_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+
+        <!-- step 3: 每轮 close → clear tilt → home (无论前 2 步如何)。
+             gripper_close 走 best-effort Fallback;clear bridge HOLDING + return_home 是直跑 -->
+        <Fallback name="if_gripper_close">
+          <Sequence name="gripper_close_step">
+            <MoveArmToNamed name="close_gripper_in_cycle" named_target="gripper_close"
+              named_targets="{@named_targets}"/>
+          </Sequence>
+          <ForceSuccess name="gripper_close_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+        <!-- 2026-10-10 debug:perception 链路不稳,clear_tilt 也跳过(本轮根本没
+             tilt 过,clear 报 clear_already_idle 噪音)。等 head/arm 检测稳定
+             后和 tilt_forward_down 一起加回来。 -->
+        <!--
+        <SetBodyPose name="clear_tilt_after_arm" clear="true"/>
+        -->
+        <MoveArmToNamed name="return_home" named_target="home"
+          named_targets="{@named_targets}"/>
+
+        <!-- step 4: 等用户输入 → 移动到释放位姿 → 张开夹爪 → return home
+             (best-effort 包在 Fallback + ForceSuccess 里,user 不发
+             /bt_user_input 整步 skip,BT 继续下一轮 pick —— 避免 Repeat 在
+             WaitForUserInput FAILURE 时 halt,2026-10-10 验证)。
+             复用 user_gated_auto_pick_and_place.xml §5 的 place_pose 实测
+             值(dog base 在 world 原点附近,place 在 base 前方 ~0.36 m)。
+             release_pose 跟 place_pose 是同一处实测,命名沿用 release_*
+             让本树内上下文清晰(对外跟 user_gated 树无关联)。
+             最后 return_home 让 arm 在下一轮 pick 前复位,防止累积漂移。 -->
+        <Fallback name="if_release_gated">
+          <Sequence name="release_step">
+            <WaitForUserInput name="wait_user_input"/>
+            <SetPoseStamped name="set_release_pose" output_key="release_pose"
+              value="world;-0.0023574615976963316;0.36261628579542243;0.030876998438977288;0.6716555020654124;-0.7327486333772223;-0.10835541801734049;-0.014745515093051118"/>
+            <MoveArmToPose name="move_to_release" goal="{release_pose}"
+              planning_time="5.0" pos_box="0.001;0.001;0.001"/>
+            <MoveArmToNamed name="open_gripper_release" named_target="gripper_open"
+              named_targets="{@named_targets}"/>
+            <MoveArmToNamed name="return_home_after_release" named_target="home"
+              named_targets="{@named_targets}"/>
+          </Sequence>
+          <ForceSuccess name="release_skip">
+            <AlwaysSuccess/>
+          </ForceSuccess>
+        </Fallback>
+      </Sequence>
+    </Repeat>
+    </Sequence>
+  </BehaviorTree>
+</root>

@@ -1,0 +1,36 @@
+{
+    "position": [
+        -0.07557631407876515,
+        4.67004955935324e-05,
+        -0.08578017363610217
+    ],
+    "orientation": [
+        -0.12319024999310083,
+        0.11841231151818288,
+        -0.6819991059640346,
+        0.7111117396385858
+    ],
+    "rpy": [
+        [
+            -0.34342946744816577,
+            0.0003774889680462226,
+            -1.529072731174116
+        ]
+    ],
+    "_meta": {
+        "source": "2026-10-08_09-29-49_calibration.json",
+        "transformation": "camera_arm_color_optical_frame -> tcp_link",
+        "tcp_offset_applied": [
+            0.0,
+            0.0,
+            0.12,
+            0.0,
+            0.0,
+            0.0
+        ],
+        "comment": "标定 JSON 原是 link6 <- camera (handeye_calibration_ros 工具输出 P_tcp = R·P_camera + t, R 把 camera 向量映射到 link6 向量,t 是 camera 原点在 link6 系下的表达)。已叠加 tcp_offset=[0,0,0.12,...] (agx_gripper 偏移 0.12m),转成 camera -> tcp_link。R_a2t 把 camera-frame 向量映射到 tcp_link-frame 向量,t_a2t 是 camera 原点在 tcp_link 系下的表达。use 公式 P_arm_in_tcp = R_a2t · center + t_a2t(直接,不要 .inverse() / (P-t))。换 gripper 或改 tcp_offset 必须重新生成。修正于 2026-10-09(此前 _meta.transformation 写反导致 compute_arm_target_world 25cm world-frame 偏差)。"
+    }
+}
+
+
+

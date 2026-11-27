@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  transit_return.xml — 从洞口摆渡回基地。transit_mission.xml 的镜像。
+
+  ┌─ 现场怎么用 ────────────────────────────────────────────────┐
+  │ 1. A+C 已经在跑(出去那趟起过, 不用重起)                      │
+  │ 2. 狗站在洞口、机头朝向与出洞那一刻一致                       │
+  │    (transit_mission 到点后 align_yaw=true, 会把它摆回出发朝向, │
+  │     所以正常流程下不需要手动转)                               │
+  │ 3. 调这棵子树: <SubTree ID="TransitReturn"/>                 │
+  └───────────────────────────────────────────────────────────┘
+
+  坐标: 和 transit_mission 一样, "local" 的原点是**这棵子树启动那一刻**
+    狗的位置, x 轴是那一刻的机头朝向(TransitToLocalPoint::capture_origin)。
+    所以回程就是去程的相反数:
+        去程  (X, Y) = (2.43, 0.52)
+        回程  (X, Y) = (-2.43, -0.52)
+    两趟能对消的前提: 回程启动时狗的机头朝向 == 去程启动时的机头朝向。
+    去程 TransitToPose 带 align_yaw=true, 把狗摆回了出发朝向, 所以正常
+    流程成立; 如果在洞口又手动转过方向, 这里的局部坐标就不再指向基地,
+    必须先摆正朝向或按新朝向重算这两个数。
+
+  **只改下面 value 里两个数**(和 transit_mission.xml 里那两个数取反)。
+  注意别再动 transit_mission 的数而不动这里 —— 两个文件是配对的。
+
+  不做 StartMapping: 建图在去程已经触发, 回程再触发一次没有意义
+  (point_lio 的 /start_mapping 是幂等 latch, 但没必要)。
+
+  重试语义同 transit_mission: RetryUntilSuccessful num_attempts="3"。
+  注意: 局部原点是每次 onStart 重新捕获的, 所以重试时 (X, Y) 仍是相对
+  "当前这次启动的位置", 而不是最初的基地 —— 如果第一次跑了一半才失败,
+  剩下的距离就不对了。真机上一旦发生中途失败, 建议人工把狗摆回洞口再跑。
+-->
+<root BTCPP_format="4" main_tree_to_execute="TransitReturn">
+  <BehaviorTree ID="TransitReturn">
+    <RetryUntilSuccessful num_attempts="3">
+      <Sequence>
+        <!-- ===== 只改这一行: 去程坐标的相反数 ===== -->
+        <SetPoseStamped name="set_return_goal"
+                        output_key="return_goal_local"
+                        value="local;-2.43;-0.52;0.0;0;0;0;1"/>
+        <!-- value 格式：frame;x;y;z;qx;qy;qz;qw
+             x = 往当前机头方向多少米(负 = 后退方向), y = 往左为正。
+             frame_id 必须是 "local", TransitToLocalPoint 只认这个字面量。 -->
+
+        <TransitToLocalPoint name="go_home"
+                             goal="{return_goal_local}"
+                             result_reason="{transit_return_reason}"/>
+      </Sequence>
+    </RetryUntilSuccessful>
+  </BehaviorTree>
+</root>
