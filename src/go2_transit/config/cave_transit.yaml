@@ -1,0 +1,48 @@
+transit_node:
+  ros__parameters:
+    # 规划坐标系：默认机器狗自身 odom（开机原点、x 轴为开机朝向）。
+    # 想跟着 point_lio 的 SLAM 地图走就改成 map —— local costmap 仍在 odom，
+    # nav2 会自动用 map->odom 做换算。
+    planning_frame: odom
+    base_frame: base_footprint
+    # behavior_server 自己的 global_frame（见 nav2_params.yaml 的 behavior_server）。
+    # Spin 的 target_yaw 是在这个系里的绝对角；planning_frame 与它不同时必须换算，
+    # 否则切到 map 规划后每一次 Spin 都会稳定偏掉 map->odom 的 yaw。
+    spin_global_frame: odom
+
+    # 到点判定（三处必须一致，否则 transit 会永远判不到点 -> UNREACHABLE）：
+    #   1) 这里的 default_xy_tolerance（状态机 VERIFY 用）
+    #   2) nav2_params.yaml 里 goal_checker_id 指向的 checker 的 xy_goal_tolerance
+    #   3) nav2_params.yaml 里 FollowPath.xy_goal_tolerance（RotateToGoal 的
+    #      "只转不走"窗口，锁存；大于 1)/2) 时狗会提前停下）
+    # 2026-11-27: 0.25 -> 0.15 实测不可达（真机停在 0.17~0.19，FINAL_ALIGN
+    # spin 还会再带偏 ~2 cm）-> 改 0.20。并用专用 transit_goal_checker
+    #（不影响探索用的 general_goal_checker）。
+    default_xy_tolerance: 0.20
+    default_yaw_tolerance: 0.17  # 约 10°
+    path_spacing_m: 0.25         # 直线路径点间距
+
+    # 大角度先原地转；<=0 关闭预对准
+    pre_align_threshold_rad: 0.5
+    # 预对准失败时退化成"让 DWB 边走边拐"，且不消耗重试次数
+    pre_align_fallback: true
+
+    # 超时
+    follow_path_timeout_s: 300.0  # 30 m / 0.4 m/s ≈ 75 s，留 4 倍余量
+    spin_timeout_s: 30.0
+    total_timeout_s: 360.0
+    ready_wait_s: 20.0            # 等 nav2 / TF 就绪的上限（冷启动用）
+
+    max_retries: 2                # 失败后的重试次数，总尝试次数 = max_retries + 1
+
+    controller_id: FollowPath
+    # 专用 0.15 m checker（nav2_params.yaml 里与 general_goal_checker 并列加载）。
+    # 用 general 会让 Nav2 在 0.25 m 就报成功，而 transit 的 VERIFY 要求 0.15
+    # -> 每次都在目标前 0.1~0.2 m 判失败、重试 3 次后 UNREACHABLE。
+    goal_checker_id: transit_goal_checker
+
+    # true：只算路径 / 打日志，不发 nav2 动作，不动机器狗
+    dry_run: false
+
+    status_rate_hz: 2.0
+    action_namespace: go2_transit
