@@ -2,6 +2,11 @@
 
 本目录用于放置 ROS2 功能包。
 
+> **clone 下来是空的几个位置**：`point_lio_ros2/` 来自
+> [Lunar-Grotto-Walker-PointLIO](https://github.com/Lunar-Grotto-Walker-Team/Lunar-Grotto-Walker-PointLIO)
+> （GPL-2.0，单独仓库），`livox_ros_driver2/`、`unitree_ros2/` 等来自 vendor 仓库。
+> 都要先 `vcs import src < deps.repos` 才有，见 [依赖说明](../docs/dependencies.md)。
+
 ## 工作空间构建
 
 ```bash
