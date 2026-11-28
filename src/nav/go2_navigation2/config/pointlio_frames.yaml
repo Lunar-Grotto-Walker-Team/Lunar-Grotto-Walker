@@ -1,0 +1,134 @@
+map_odom_correction:
+  ros__parameters:
+    body_frame: "aft_mapped"
+    pgo_odom_topic: "/aft_pgo_odom"
+    prefer_pgo_odom: true
+    # 2026-11-06: 1.0 -> 3.0。SLC 回环优化期间 /aft_pgo_odom 会短暂断流
+    # (~1-2 s)。1 s 超时会造成 PGO 位姿 <-> 原始 LIO TF 反复切换，
+    # map->odom 在两个对齐之间来回跳，global_costmap 累积出多条走廊。
+    # 3 s 内仍沿用最后一条 PGO 位姿（短暂冻结），超过才回退。
+    pgo_timeout_sec: 3.0
+    # 回退到 TF 后，要求 PGO 连续新鲜这么多秒才切回，避免在边界 ping-pong。
+    pgo_recover_sec: 2.0
+    # 真正的源切换（PGO <-> TF）且 map->odom 跳变超过阈值时，
+    # 调用 /global_costmap/clear_entirely_global_costmap 清掉旧对齐的残留。
+    clear_costmap_on_switch: true
+    switch_clear_translation_m: 0.15
+    switch_clear_yaw_rad: 0.10
+    body_to_base_x: 0.187793
+    body_to_base_y: 0.02329
+    body_to_base_z: 0.391836
+    body_to_base_roll: 0.0
+    body_to_base_pitch: 0.2269
+    body_to_base_yaw: 0.0
+
+cloud_to_base:
+  ros__parameters:
+    input_topic: "/cloud_registered"
+    output_topic: "/cloud_base"
+    body_frame: "aft_mapped"
+    base_frame: "base_footprint"
+    body_to_base_x: 0.187793
+    body_to_base_y: 0.02329
+    body_to_base_z: 0.391836
+    body_to_base_roll: 0.0
+    body_to_base_pitch: 0.2269
+    body_to_base_yaw: 0.0
+
+# 地形相对高度的地面过滤: 把 /cloud_registered 拆成 ground / obstacles 两路,
+# 供 local_costmap 的 obstacle_layer 以两个 source 消费。
+# ground    -> marking:false, clearing:true (只清不标)
+# obstacles -> marking:true            (真正参与避障)
+# 这样坡面不会再被 min_obstacle_height 的绝对高度判据当成障碍。
+ground_filter:
+  ros__parameters:
+    input_topic: "/cloud_registered"
+    output_obstacles_topic: "/cloud_obstacles"
+    output_ground_topic: "/cloud_ground"
+    # point_lio 的 body 帧; 用 TF 取机器人在点云帧(camera_init)下的位置。
+    body_frame: "aft_mapped"
+    # 2026-11-04: 输出改到 base_footprint(原来直接沿用 camera_init 世界系)。
+    # local costmap 在 odom 系; 用世界系点云时它必须对每一帧套用漂移中的
+    # map->odom 修正, 已经打下的旧标记不会重算, 旋转时墙会被拖成扇形
+    # (实测全程 map->odom yaw 摆动 9°)。改到 base_footprint 后 costmap 只
+    # 用高频连续的 odom->base, 不再经过 map->odom。设为空串可回退旧行为。
+    output_frame: "base_footprint"
+    # 2026-11-11: 输出消息盖什么 stamp。
+    #   auto   : 输入 stamp 与本地时钟同域(±stamp_match_tolerance_sec)且位姿
+    #            是 stamp 精确查到的 -> 保留雷达 stamp, 下游 costmap 按
+    #            "扫到那一刻"查 odom->base, 去掉处理延迟造成的旋转误差;
+    #            否则(离线回放 stamp 是录制日期 / 走了 latest 回退)重盖 now()。
+    #   always : 只要位姿精确就保留(调试)。
+    #   never  : 始终重盖 now()(旧行为)。
+    # 实机 Livox 用 Jetson 软件时间戳, 与 odom->base 同域; 回放会走重盖分支。
+    preserve_input_stamp: "auto"
+    stamp_match_tolerance_sec: 1.0
+    body_to_base_x: 0.187793
+    body_to_base_y: 0.02329
+    body_to_base_z: 0.391836
+    body_to_base_roll: 0.0
+    body_to_base_pitch: 0.2269
+    body_to_base_yaw: 0.0
+    # 局部栅格: 12 m 覆盖 local costmap 4x4 窗口 + 6 m 障碍范围。
+    # 格内高差 = cell_size * tan(theta); 20% 分位取低端后, 高点与地面估计
+    # 的差约 0.8 * cell_size * tan(theta), 要求 <= min_height 0.15:
+    #   0.5 m 格 -> 坡度上限约 20.6 度
+    #   0.3 m 格 -> 坡度上限约 32 度
+    # 代价是每格点数变少: 12 m 网格从 576 格变 1600 格, ~1900 点/帧下
+    # 近场约 2-3 点/格, 远场更多格靠邻域填补。
+    grid_size: 12.0
+    cell_size: 0.3
+    # 每格取 z 的 20% 分位作为地面高度; 少于 2 点的格不可信。
+    ground_percentile: 20.0
+    min_points_per_cell: 2
+    # 离局部地面超过 0.15 m 才算障碍(与旧 min_obstacle_height 0.1 同级)。
+    min_height: 0.15
+    # 离局部地面超过 1.2 m 的点(门梁/天花板/悬垂)直接丢弃: 2D costmap 里
+    # 它们会把本可通过的门洞堵死。墙体只保留下半段, 仍然会被标记。
+    max_height: 1.2
+    # 用邻域 min 填补脚下盲区/稀疏格(4 x 0.3 = 1.2 m, 刚好覆盖 Mid360S
+    # 约 1.07 m 的地面盲区; 若脚下仍出现无效格, 把它加到 6)。
+    fill_iterations: 4
+
+# 2026-11-18: Unitree L2 近场地面/障碍拆分(第二个 ground_filter 实例, 代码相同)。
+# 输入 /utlidar/cloud_deskewed 的 frame_id 就是 odom, 点已经在 local_costmap 的
+# global_frame 里, 不需要任何外参标定/再投影; 实测机身自返回也已分割掉
+# (corner bag 全 1056 帧、机身框内离地 >0.15 m 的点共 0 个)。
+# 但**仍然**要过这一层, 两个原因:
+#   1) obstacle_layer 的 min/max_obstacle_height 是在 global frame 的绝对 z 上
+#      比的(observation_buffer.cpp bufferCloud)。地面在 odom 里 z≈-0.03, 坡上
+#      1.5 m 外地面就抬到 +0.18, 整片坡会被标 lethal。这里和 Livox 那路一样按
+#      "离局部地面的高度"拆分。
+#   2) nav2 的 raytrace 起点是点云 header.frame_id 的原点(observation_buffer.cpp
+#      取 (0,0,0) 再变换到 global), 不是机器人位置。所以必须发 base_footprint,
+#      否则射线从 odom 原点(开机点)射出, 近场清除全错。
+# body_frame 用 base_footprint: 点云在 odom, 机器人在 odom 里的位姿就是
+# base_footprint, 因此 body -> base 这段外参是恒等(下面 6 个 0)。
+ground_filter_l2:
+  ros__parameters:
+    input_topic: "/utlidar/cloud_deskewed"
+    output_obstacles_topic: "/cloud_obstacles_l2"
+    output_ground_topic: "/cloud_ground_l2"
+    body_frame: "base_footprint"
+    output_frame: "base_footprint"
+    preserve_input_stamp: "auto"
+    stamp_match_tolerance_sec: 1.0
+    # 恒等外参。不要从上面 ground_filter 段复制 0.187793 / pitch 13° 过来:
+    # 那是 aft_mapped(body) -> base_footprint 的安装链, 这里 body 已经是
+    # base_footprint, 套上去会把整片点云平移 0.39 m。
+    body_to_base_x: 0.0
+    body_to_base_y: 0.0
+    body_to_base_z: 0.0
+    body_to_base_roll: 0.0
+    body_to_base_pitch: 0.0
+    body_to_base_yaw: 0.0
+    # L2 稀疏(<3 m 每帧约 1100 点, 其中 90% 在 1.5 m 内), 只信任 1.5 m。
+    # 栅格 4 m(半宽约 2 m)覆盖信任半径 + 邻域填洞; 0.3 m 格与 Livox 那路
+    # 一致(坡度上限约 32°), 同尺寸已经在这个 bag 上验证过拆分结果合理。
+    grid_size: 4.0
+    cell_size: 0.3
+    ground_percentile: 20.0
+    min_points_per_cell: 2
+    min_height: 0.15
+    max_height: 1.2
+    fill_iterations: 4

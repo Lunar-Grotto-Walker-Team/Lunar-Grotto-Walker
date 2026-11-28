@@ -1,0 +1,62 @@
+<!--
+  navigate_to_pose_terrain_recovery.xml
+  =====================================
+  地形链专用 Nav2 行为树（2026-11-18）。
+
+  与 Humble 默认树 navigate_to_pose_w_replanning_and_recovery.xml 的差异：
+
+  1) 规划失败不再清 global costmap。
+     global costmap 只有 terrain_traversability_layer + inflation_layer，
+     地形由上游 /terrain_traversability（2 Hz 整图）提供。
+     TraversabilityLayer::reset() 只丢弃缓存消息，下一周期同一份地图整块写回，
+     所以清图不会改变规划结果；清完到下一帧之间全图 UNKNOWN，而 NavFn
+     allow_unknown=true，该窗口内的规划可能穿过刚被清掉的 LETHAL 格。
+     全局清图由 map_odom_correction 的 clear_costmap_on_switch 负责。
+     这里改用 Wait 1 s，让 TF / 上游地图有一个周期的机会。
+
+  2) 顶层恢复次数 6 -> 3，恢复动作改为 RoundRobin：
+       Wait 3 s  -> 等 2 Hz 地形更新 + PGO 收敛
+       Spin 1.0  -> 重新观测（比默认 1.57 小，1.5 m 洞内少撞 Collision Ahead）
+       ClearEntireCostmap(local) -> 冲掉幽灵点；真实障碍 0.2-0.5 s 会重新标回
+     删除 BackUp：0.30 m @ 0.05 m/s 要 6 s，洞穴里空间和收益都不够。
+     最坏恢复耗时明显低于 frontier 的 20 s no-progress watchdog，
+     失败可以更快冒泡到探索侧的 suppression / backtracking。
+
+  3) local costmap 的上下文恢复保留：FollowPath 失败先清 local 再用原路径重试一次。
+
+  回滚：bt_navigator 参数 default_nav_to_pose_bt_xml 传空字符串即可回到
+  nav2_bt_navigator 包内默认树。
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <!-- 不清 global：等待上游地形/位姿一个周期后重规划。 -->
+            <Wait wait_duration="1.0"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <!-- local 是 5x5 m rolling + odom 系 + 5 Hz 点云，清掉可冲走幽灵点。 -->
+          <ClearEntireCostmap name="ClearLocalCostmap-Context"
+                              service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <!-- 1. 先等地形图/PGO 更新，通常最便宜且最有效。 -->
+          <Wait wait_duration="3.0"/>
+          <!-- 2. 再不成就转 1 rad 重新观测（有碰撞检查，转不动会失败并轮到下一项）。 -->
+          <Spin spin_dist="1.0"/>
+          <!-- 3. 最后清一次 local，排除坏帧/幽灵点。 -->
+          <ClearEntireCostmap name="ClearLocalCostmap-Subtree"
+                              service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
