@@ -8,7 +8,7 @@
 
 **vendor 不是本仓库的依赖项，而是配套的独立环境**：单独 clone、单独构建，
 用它的 `install/setup.bash` 叠加到环境里之后再编译本仓库。根目录
-[`deps.repos`](../deps.repos) 只负责 GPL-2.0 的 Point-LIO（见 1.2）。
+[`deps.repos`](../deps.repos) 只负责 GPL-2.0 的 Point-LIO（见 1.3）。
 
 > **为什么用 vendor 而不是直接从上游克隆再打补丁**：vendor 仓库里我们对上游的
 > 改动是 **commit**，不是补丁文件。从上游克隆拿到的是未适配的代码，只能照着各目录
@@ -25,13 +25,29 @@
 
 ## 1. 上游包（已修改）
 
-### 1.1 在本仓库内（BSD-3-Clause）
+### 1.1 在本仓库内（宽松许可）
 
 | 包 | 上游 | License | 改动说明 |
 |---|---|---|---|
 | `src/simple_loop_closure_ros2`（包名 `simple_loop_closure`） | [ashBabu/simple_loop_closure](https://github.com/ashBabu/simple_loop_closure) → [vectr-ucla/SimpleLoopClosure](https://github.com/vectr-ucla/SimpleLoopClosure) | BSD-3-Clause | [UPSTREAM.md](../src/simple_loop_closure_ros2/UPSTREAM.md) |
+| `src/frontier_exploration_ros2` | [mertgulerx/frontier-exploration-ros2](https://github.com/mertgulerx/frontier-exploration-ros2) @ `v1.6.1` | Apache-2.0 | [UPSTREAM.md](../src/frontier_exploration_ros2/UPSTREAM.md)（+5804/-43，35 个文件） |
 
-### 1.2 在独立仓库（GPL-2.0）
+两者都是宽松许可，与主仓库兼容，不需要像 `point_lio` 那样隔离。
+
+### 1.2 团队自写（非上游）
+
+| 目录 | 内容 |
+|---|---|
+| `src/base/` | `go2_core`、`go2_driver`、`go2_twist_bridge`（底盘驱动、`map_odom_correction`、TF 桥） |
+| `src/nav/` | `go2_navigation2`（Nav2 配置/行为树）、`go2_perception`、`go2_slam`、`go2_description` |
+| `src/go2_transit/`、`src/pointlio_cloud_relay/` | 摆渡 action、点云 relay |
+| `src/go2_front_camera_driver/` | Go2 前置相机（GStreamer H.264） |
+
+> `go2_description` 的 `dae/` + `meshes/` 约 50 MB，是 Unitree 官方模型，
+> **不入库**：`bash tools/fetch_go2_meshes.sh` 从 `unitreerobotics/unitree_ros`
+> 拉取（钉 commit，与官方逐字节一致）。缺模型时包仍可构建，只是 RViz 里没有模型。
+
+### 1.3 在独立仓库（GPL-2.0）
 
 | 包 | 仓库 | 上游 | License |
 |---|---|---|---|
