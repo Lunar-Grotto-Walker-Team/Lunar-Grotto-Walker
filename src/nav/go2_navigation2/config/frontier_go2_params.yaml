@@ -1,0 +1,237 @@
+# =============================================================================
+# frontier_exploration_ros2 参数 - Unitree Go2 (四足机器狗) 专用
+#
+# 数据来源（实测）：
+#   - go2-nav2-amcl/src/go2_navigation2/config/nav2_params.yaml
+#       robot_radius        : 0.20 m
+#       max_vel_x / y / θ   : 2.0 / 1.3 / 2.0
+#       max_speed_xy        : 0.55  (DWB 实际期望合成线速度上限)
+#       inflation_radius    : 0.50  (cost_scaling_factor = 3.0)
+#       obstacle_max_range  : 2.5   (costmap 观测范围, 非雷达硬件最大距离)
+#       robot_base_frame    : base_link    # 旧 amcl 分支的值; 本文件实际用
+#                                           # base_footprint (见下方 ros__parameters)
+#   - go2_description/urdf/go2_description.urdf
+#       utlidar_lidar       : Unitree UT Lidar, 360°
+#
+# 调参要点：
+#   - 全向底盘 (有 y 速度)，起点角度惩罚可适当放宽
+#   - base_link 归机械臂栈(odom->base_link = uLidar 原点), 导航侧用 base_footprint
+#   - inflation=0.5, occ_threshold=65 与 nav2 inflation 一致
+# =============================================================================
+
+frontier_explorer:
+  ros__parameters:
+
+    # =============== TOPICS ===============
+    # 与 go2 nav2_params.yaml 中的 costmap 主题保持一致
+    # 与 pointlio 地形栈对齐: 没有 /map, 由 pointlio_cloud_relay/
+    # exploration_map_relay 把 /terrain_traversability 转成 frontier 能吃的
+    # 0/-1/100 语义并按 0.2 m 池化。
+    map_topic: /exploration_map
+    costmap_topic: /global_costmap/costmap
+    local_costmap_topic: /local_costmap/costmap
+
+    # Nav2 action server 名
+    navigate_to_pose_action_name: navigate_to_pose
+
+    # TF 帧
+    global_frame: map
+    robot_base_frame: base_footprint   # base_link 归机械臂栈，导航侧统一用 base_footprint
+
+    # 可视化与调试输出
+    frontier_marker_topic: /explore/frontiers
+    selected_frontier_topic: /explore/selected_frontier
+    optimized_map_topic: /explore/optimized_map
+    completion_event_topic: exploration_complete
+
+    # 雷达点 marker 大小 (TB3 默认 0.15, go2 视觉上稍大更清晰)
+    frontier_marker_scale: 0.20
+
+    # =============== QoS ===============
+    # /exploration_map 由 exploration_map_relay 以 transient_local 发布,
+    # 与 bridge 的 /terrain_traversability 一致。
+    map_qos_durability: transient_local
+    map_qos_reliability: reliable
+    map_qos_depth: 1
+
+    # 调试启动时若不确定 QoS 可开: map_qos_autodetect_on_startup: true
+    map_qos_autodetect_on_startup: false
+    map_qos_autodetect_timeout_s: 5.0
+
+    # costmap QoS
+    costmap_qos_reliability: reliable
+    costmap_qos_depth: 10
+    local_costmap_qos_reliability: inherit
+    local_costmap_qos_depth: -1
+
+    # =============== GENERAL ===============
+    # slam_toolbox 1Hz 完全够用
+    map_processing_rate_hz: 1.0
+
+    # 单独跑通阶段：手动启动便于观察日志
+    autostart: false
+    # 启 CLI 控制 (frontier_exploration_ctl start/stop)
+    control_service_enabled: true
+    # 探索完成时发 std_msgs/Empty 到 /exploration_complete
+    completion_event_enabled: true
+
+    # 起步避免 lockup（短距雷达或静态 SLAM 推荐开）
+    escape_enabled: true
+    # 探索完成不回起点 (保留现场方便人工取狗或接 dock)
+    return_to_start_on_complete: false
+
+    # =============== MRTSP SOLVER ===============
+    # 'dp' 更智能 (bounded-horizon DP), 'greedy' 更快
+    mrtsp_solver: dp
+    dp_solver_candidate_limit: 8    # 2026-11-19: 12 -> 8, 候选池收小, 远处大簇更不容易进 8 步路线
+    dp_planning_horizon: 8          # 单步看 8 个 frontier 的转移
+
+    # =============== MAP OPTIMIZATION ===============
+    # 双边滤波 + 膨胀, 改善稀疏雷达下的 frontier 质量
+    frontier_map_optimization_enabled: true
+
+    # =============== PREEMPTION ===============
+    # 导航过程中若 active frontier 已无可见新增，主动重选更优 frontier
+    goal_preemption_enabled: true
+    goal_preemption_min_interval_s: 2.0  # 避免过于频繁重选
+    goal_skip_on_blocked_goal: true       # 目标被 costmap 标记为阻塞就跳过
+
+    # =============== POST-GOAL ===============
+    # go2 SLAM 稳定，关掉等更快
+    post_goal_settle_enabled: true    # 地形图 1 Hz, 留一帧完成更新
+    post_goal_min_settle: 1.50
+
+    # =============== SUPPRESSION ===============
+    # 单独跑通先关; 若发现反复失败同一 frontier 再开
+    frontier_suppression_enabled: true   # 压住永远到不了的边界 frontier
+    # 启用 suppression 后: 所有 frontier 被压住时的行为
+    all_frontiers_suppressed_behavior: stay   # 停车等人工接管, 与不自动返航一致
+
+    # =============== MRTSP Scoring ===============
+    # 注意：这两个参数只用于成本矩阵下界估计，不直接控制狗
+    max_linear_speed_vmax: 0.55    # 对齐 DWB max_speed_xy (保守估计)
+    max_angular_speed_wmax: 1.50   # 实际 2.0; 0.5~1.5 更符合真实转弯节奏
+
+    # 雷达有效感知半径（仅 MRTSP 路径成本用，不是真实硬件上限）
+    # 2026-11-19: 5.0 -> 2.5。路径成本是 (2d - 此值)，减得越少，远处簇的相对成本越高。
+    sensor_effective_range_m: 2.5
+
+    # 2026-11-19: 1.0 -> 2.5，加强距离惩罚（选点过远的直接旋钮）。
+    weight_distance_wd: 2.5   # 距离权重
+    weight_gain_ws:    1.0   # 信息增益权重
+
+    # =============== Navigation Safety ===============
+    # robot_radius=0.20 → 2.5×≈0.5; 全向底盘建议再放宽以减少抖动
+    frontier_selection_min_distance: 1.0
+    frontier_visit_tolerance: 0.40   # frontier 等价判定容差 (m)
+
+    # =============== Map Optimization 细节 ===============
+    # 候选 frontier 与狗的最小距离 (m)
+    frontier_candidate_min_goal_distance_m: 1.2
+
+    # ---- 2026-11-06: goal 可达性增强 ----
+    # 原来的 goal 取"紧贴已知/未知交界"的 free 邻格, 常落在膨胀带 / 地形层
+    # lethal 边缘上, Nav2 规划或接近到点会失败 → 恢复行为清 costmap →
+    # 走廊重影 + 反复回访。
+    # 下面三个开关把 goal 推进已知自由区, 并在派发前删掉走不到的候选。
+    # 0.2 m 池化的 /exploration_map 上: 3 格吸附半径 = 0.6 m,
+    # clearance 2 格 = 0.4 m; 0.5 m 回退在 12 m 雷达量程下几乎不损失视野。
+    goal_backoff_from_frontier_m: 0.5
+    goal_backoff_search_radius_cells: 3
+    goal_clearance_check_enabled: true
+    goal_clearance_radius_cells: 2
+    goal_reachability_check_enabled: true
+
+    # ---- 2026-11-11: "探索完成"去抖 ----
+    # 原来一次没 frontier 就永久判定完成(启动空地图/SLAM 重定位/costmap 清空都会
+    # 命中), 之后再也不探索。现在要求连续 N 次无 frontier, 且地图已有足够已知格。
+    # /exploration_map 0.2 m 池化: 500 格 ≈ 20 m² 已知区域。
+    exploration_complete_confirm_scans: 10
+    exploration_complete_min_known_cells: 500
+    # 2026-11-19: 候选 frontier 为空但 raw map 仍有"未知且 8 邻接可通行"的格时,
+    # 说明只是到不了/被压制, 禁止判定完成(只报 frontiers exist but unreachable/suppressed)。
+    exploration_complete_raw_boundary_guard: true
+
+    # nav2 costmap 用 cost_scaling_factor=3.0 + inflation_radius=0.5
+    # cost >= 65 ≈ inflation 边缘外侧, 用于 frontier 阻塞判定
+    occ_threshold: 65
+    # 最小 frontier 簇大小 (cell 数), 过滤噪声小簇
+    min_frontier_size_cells: 3    # 0.2 m 池化后等价于旧链 5 格量级
+
+    # 双边滤波参数
+    sigma_s: 2.0     # 空间 sigma (cell)
+    sigma_r: 30.0    # 范围 sigma (灰度)
+    dilation_kernel_radius_cells: 1
+
+    # =============== Preemption 细节 ===============
+    # 距 active frontier < 0.5m 视为完成 (与 inflation_radius 一致)
+    goal_preemption_complete_if_within_m: 0.50
+
+    # 雷达参数 (用于可见揭示估计)
+    goal_preemption_lidar_range_m:        12.0   # UT Lidar 有效距离
+    goal_preemption_lidar_fov_deg:        360.0  # 全向
+    goal_preemption_lidar_ray_step_deg:    1.0
+    goal_preemption_lidar_min_reveal_length_m: 0.5
+    goal_preemption_lidar_yaw_offset_deg:   0.0
+
+    # =============== Suppression 细节 (启用时生效) ===============
+    frontier_suppression_attempt_threshold:      2
+    frontier_suppression_base_size_m:            1.0
+    frontier_suppression_expansion_size_m:       0.5
+    frontier_suppression_timeout_s:              90.0
+    frontier_suppression_no_progress_timeout_s:  20.0
+    frontier_suppression_progress_epsilon_m:     0.25
+    frontier_suppression_startup_grace_period_s: 20.0
+    frontier_suppression_max_attempt_records:    256
+    frontier_suppression_max_regions:             64
+    # ---- Cave mission mode (Go2 cave deployment) ----
+    cave_mode_enabled: true
+    # 2026-11-19: 3.0 -> 1.0。3 m 的"入口禁区"会把洞内近洞口 3 m 内的
+    # 岔路口/未知区一起当成"洞外"剔除, 近洞口的分支永远不探索。
+    # 只在洞口平面之后 (dot < -entrance_gate_margin_m) 算洞外, 见 cave_geometry.cpp。
+    entrance_radius_m: 1.0
+    entrance_gate_enabled: true
+    entrance_gate_margin_m: 0.5
+    direction_policy_enabled: true
+    # 2026-11-19: 60 -> 30。前向桶是硬过滤(第一个非空桶赢), 收窄后侧向岔路口更早进候选。
+    front_cone_half_deg: 30.0
+    right_arc_max_deg: 150.0
+    tangent_window_m: 1.0
+    traj_record_rate_hz: 2.0
+    traj_min_spacing_m: 0.2
+    traj_max_points: 20000
+    junction_dedup_m: 1.0
+    junction_angle_sep_deg: 45.0
+    junction_stack_max: 32
+    suppression_clear_radius_m: 2.0
+    return_waypoint_spacing_m: 5.0
+    return_max_consecutive_failures: 3
+    target_standoff_radius_m: 0.7
+    target_standoff_step_deg: 15.0
+    clearance_cap_m: 1.0
+    path_center_weight: 0.5
+    path_center_sigma_m: 0.5
+    heading_penalty: 0.2
+    standoff_reach_tolerance_m: 0.25
+    standoff_yaw_tolerance_deg: 20.0
+    target_dedup_m: 0.5
+    target_cooldown_s: 5.0
+    grab_done_timeout_s: 60.0
+    spin_time_allowance_s: 10.0
+    spin_yaw_tolerance_deg: 15.0
+    resume_clearance_m: 0.5
+    target_topic: /exploration/target_pose_base
+    grab_done_topic: /exploration/grab_done
+    pause_topic: /exploration/pause
+    resume_topic: /exploration/resume
+    state_topic: /exploration/state
+    state_publish_rate_hz: 1.0
+    goal_hysteresis_threshold: 0.15
+    suppressed_branch_retries: 3
+    patrol_enabled: true
+    patrol_waypoint_spacing_m: 3.0
+    # 2026-11-19: 0.0 -> 300.0。0 表示永不超时, 探索判定完成后会在已走路点之间
+    # 无限首尾往返(真机表现为"三个点来回走"), 既不结束也不回洞口。
+    # 现在巡逻 5 分钟后自动 start_returning() 回入口并进入 COMPLETE。
+    patrol_timeout_s: 300.0
+    return_topic: /exploration/return

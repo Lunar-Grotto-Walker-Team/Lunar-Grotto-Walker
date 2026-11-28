@@ -28,12 +28,22 @@ import yaml
 MAX_FILE_BYTES = 5 * 1024 * 1024
 SKIP_DIRS = {".git", "build", "install", "log", "__pycache__", "thirdparty"}
 
+# 不入库、由脚本下载的资产目录（按相对路径前缀排除，避免误伤同名目录）。
+# go2_description 的官方模型约 50 MB，用 tools/fetch_go2_meshes.sh 拉取。
+SKIP_PREFIXES = (
+    Path("src/nav/go2_description/dae"),
+    Path("src/nav/go2_description/meshes"),
+)
+
 
 def iter_files(root: Path, patterns: tuple[str, ...]):
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+        rel = path.relative_to(root)
+        if any(part in SKIP_DIRS for part in rel.parts):
+            continue
+        if any(rel == pre or pre in rel.parents for pre in SKIP_PREFIXES):
             continue
         if path.suffix in patterns:
             yield path
@@ -96,7 +106,12 @@ def check_hygiene(root: Path, errors: list[str]) -> None:
         errors.append(f"{path.relative_to(root)}: 不应提交大数据文件")
 
     for path in root.rglob("*"):
-        if not path.is_file() or any(p in SKIP_DIRS for p in path.relative_to(root).parts):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if any(p in SKIP_DIRS for p in rel.parts):
+            continue
+        if any(rel == pre or pre in rel.parents for pre in SKIP_PREFIXES):
             continue
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:

@@ -26,3 +26,7 @@ __pycache__/
 
 # ---- 行为树启动脚本的运行时日志 ----
 .run/
+
+# ---- Go2 模型（约 50 MB，用 tools/fetch_go2_meshes.sh 拉取）----
+src/nav/go2_description/dae/
+src/nav/go2_description/meshes/

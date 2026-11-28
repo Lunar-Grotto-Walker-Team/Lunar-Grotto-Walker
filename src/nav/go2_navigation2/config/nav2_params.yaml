@@ -1,0 +1,805 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    alpha1: 0.4   # 旋转噪声（小角度转向误差）
+    alpha2: 0.4   # 旋转噪声（大角度转向误差）
+    alpha3: 0.4   # 平移噪声（直线运动误差）
+    alpha4: 0.4   # 平移噪声（侧向运动误差，全向模型关键）
+    alpha5: 0.3   # 平移时的旋转耦合噪声（保持不变）
+    base_frame_id: "base_link"
+    beam_skip_distance: 0.5 
+    beam_skip_error_threshold: 0.9   
+    beam_skip_threshold: 0.3    
+    do_beamskip: true             #false
+    global_frame_id: "map"
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 10.0
+    laser_min_range: 0.0
+    laser_model_type: "likelihood_field"
+    max_beams: 60
+    max_particles: 3000          #2000
+    min_particles: 800          #500
+    odom_frame_id: "odom"
+    pf_err: 0.08
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 2
+    robot_model_type: "nav2_amcl::OmniMotionModel" # 全向模型,DWB 已禁侧移(vy_samples=0);差分模型会让 AMCL 在侧滑/外力推动时定位漂移过大,这里保守用全向
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    tf_broadcast: true
+    transform_tolerance: 1.2
+    update_min_a: 0.3     #0.2
+    update_min_d: 0.3     #0.25
+    z_hit: 0.5     # 降低有效命中权重（激光噪声多）
+    z_max: 0.05
+    z_rand: 0.5     # 提高随机噪声权重（容忍更多异常值）
+    z_short: 0.05
+    scan_topic: scan
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
+    # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
+    # nav2_bt_navigator/navigate_through_poses_w_replanning_and_recovery.xml
+    # They can be set here or via a RewrittenYaml remap from a parent launch file to Nav2.
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_spin_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_drive_on_heading_cancel_bt_node
+      - nav2_is_battery_charging_condition_bt_node
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false
+
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    # 控制器频率略提高，轨迹跟踪更跟手（仍受 max_speed_xy 限制）
+    controller_frequency: 15.0
+    min_x_velocity_threshold: 0.01
+    min_y_velocity_threshold: 0.05
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker", "transit_goal_checker"] # "precise_goal_checker"
+    controller_plugins: ["FollowPath"]
+
+    # Progress checker parameters
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      # 2026-11-06: 10 -> 20 s。SimpleProgressChecker 只统计平移，不看旋转；
+      # 到点后原地对准朝向不算"前进"，10 s 会误杀合法的到点旋转动作。
+      movement_time_allowance: 20.0
+    # Goal checker parameters
+    #precise_goal_checker:
+    #  plugin: "nav2_controller::SimpleGoalChecker"
+    #  xy_goal_tolerance: 0.25
+    #  yaw_goal_tolerance: 0.25
+    #  stateful: True
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      # 2026-11-06: 0.25 -> 3.15 rad（约等于只判 XY、不判最终朝向）。
+      #
+      # 真机 + bag 定位到的故障：到达目标 0.18~0.27 m 后，DWB 在
+      #   A) dist<=0.25 时 RotateToGoal 阶段"只允许旋转、对准 goal yaw"
+      #   B) dist>0.25  时 PathAlign 把车头拉回路径方向
+      # 之间反复切换 -> yaw 在 ~33°~73° 极限环；stateful goal checker 已
+      # 锁存 XY，只差 yaw_goal_tolerance (0.25 rad = 14.3°) 永远命中不了。
+      # 因为 progress checker 只统计平移，10 s 后 abort -> BT 清图重试 ->
+      # recovery spin，表现为"在目标附近来回转圈"。
+      #
+      # 探索侧（frontier_exploration_ros2）自己的完成判据就是 XY-only
+      # (is_pose_within_xy_tolerance)，且 goal_preemption_complete_if_within_m
+      # =0.5 m；它的 goal yaw 只是"派发时刻的方位角"，不参与感知/完成判定。
+      # 洞内路径绕弯时该方位角与到达方向可能差 90~180°，保留严格 yaw 会
+      # 制造假的 failed attempt -> frontier suppression -> 漏探索。
+      #
+      # 需要"到点后面向某方向"的任务，请在 BT 里加显式的后置旋转动作
+      # (rotate-to-yaw / Spin)，不要把朝向塞进 goal checker。
+      yaw_goal_tolerance: 3.15
+    # 2026-11-27: 摆渡（go2_transit）专用到点判据。transit_node 的
+    # goal_checker_id 已指向它；探索/frontier 仍走上面的 general_goal_checker
+    #（0.25 m），互不影响。
+    # 必须与 cave_transit.yaml 的 default_xy_tolerance 保持一致（都 0.20）；
+    # 2026-11-27 真机：0.15 时狗稳定停在 0.17~0.19，永远判不到点。
+    transit_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.20
+      # 朝向由 transit 到点后显式 SPIN 对齐，这里同样不判 yaw（与 general 一致）。
+      yaw_goal_tolerance: 3.15
+    # DWB parameters
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      min_vel_x: 0.0
+      # 2026-11-27 恢复 2026-11-18 的真机修复（11-20 工作区恢复时被冲掉）：
+      #   ① vy_samples: 0 是无效配置 —— one_d_velocity_iterator.hpp 里
+      #      num_samples = max(2, num_samples)，实际采样 {0.0, max_vel_y}，
+      #      约 5~9% 的帧下发 linear.y=0.2，狗边前进边侧蹭 -> "越走越斜"。
+      #      真正关掉侧移必须让 min_vel_y == max_vel_y（只产生单个采样值）。
+      #   ② max_vel_x 离实际上限太远会把采样网格砍掉一截：
+      #      vx_samples=15 步长 = max_vel_x/14；max_vel_x=2.0 时顶档 0.429，
+      #      实际速度被压在 0.286~0.429 之间。max_vel_x 贴住上限 0.40 即可。
+      # 实测对比（5 m 直走）：修复前 linear.x 峰值 0.286、31.5 s；
+      # 修复后 0.400、22.6 s，linear.y 非零帧 0。
+      min_vel_y: 0.0
+      max_vel_x: 0.40
+      max_vel_y: 0.0    # 必须与 min_vel_y 相等，否则 vy_samples=0 仍会采 {0, max}
+      max_vel_theta: 2.0
+      min_speed_xy: 0.0
+      # 合成线速度上限 sqrt(vx^2+vy^2)，只给浮点留余量；实际上限由 max_vel_x 决定
+      max_speed_xy: 0.45
+      min_speed_theta: 0.0
+      # Add high threshold velocity for turtlebot 3 issue.
+      # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
+      acc_lim_x: 2.0
+      acc_lim_y: 1.3
+      acc_lim_theta: 2.5
+      decel_lim_x: -2.0
+      decel_lim_y: -1.3
+      decel_lim_theta: -2.5
+      vx_samples: 15
+      vy_samples: 0     # 由 8 改为 0:DWB 不再采侧向速度,斜走的物质基础消失
+      vtheta_samples: 15
+      sim_time: 2.0
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      # 2026-11-27: 0.25 -> 0.20。这是 RotateToGoal critic 的"进入只转不走"
+      # 窗口（dwb_critics/rotate_to_goal.cpp，in_window_ 锁存），不是 goal
+      # checker。必须 <= 摆渡用的 transit_goal_checker.xy_goal_tolerance(0.20)，
+      # 否则狗提前停止平移、只剩旋转，永远到不了判据，
+      # progress_checker 20 s 后 abort -> transit 重试 3 次后 UNREACHABLE。
+      # 0.15 真机实测不可达（狗停在 0.17~0.19），所以三处一起取 0.20。
+      # 对探索/general 目标无影响：ControllerServer 每周期先调 isGoalReached，
+      # general_goal_checker 在 0.25 就判成功，轮不到 DWB 的窗口生效。
+      xy_goal_tolerance: 0.20
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.4   # 由 0.1 提升到 0.4:远处就开始对齐路径朝向,不再等贴脸再纠
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.4   # 同上,目标朝向早对齐
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: 1.5     # 由 -1.0(用路径终点)改为 1.5:用"1.5s 后到达的点"作朝向参考,弯道/转向更平滑
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      # 2026-11-04: update 5.0, publish 2.0 -> 5.0。发布频率是 RViz 里 local
+      # costmap 滞后的主因(2 Hz = 500 ms 才发一次)。
+      # 试过 update 10.0: 实测发布只有 3.8 Hz(更新循环 CPU 受限, 截止判断会
+      # 跳过), 且实机观感比 5.0 更差, 已回退。保持 5.0。
+      update_frequency: 5.0
+      publish_frequency: 5.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      use_sim_time: false
+      rolling_window: true
+      # 2026-11-04: 4x4 -> 5x5 m(DWB 的 obstacle_max_range 6 m 只用到窗口内;
+      # 5 m 给转向/避障多一点前视, 代价是 100x100 格而非 80x80)。
+      width: 5
+      height: 5
+      resolution: 0.05
+      robot_radius: 0.20
+      plugins: ["obstacle_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # 历史: 0.50 -> 0.30 -> 0.40 -> 0.35（宽场景调参）。
+        cost_scaling_factor: 8.0
+        # 2026-10-31 Phase 0（1.5 m 洞窟）: 0.35 -> 0.20。
+        # 洞宽 1.5 m, robot_radius 0.20 是硬约束:
+        #   0.35 -> 单侧 0.55 m, 自由宽度 0.4 m（与狗身同宽, 零余量）
+        #   0.20 -> 单侧 0.40 m, 自由宽度 0.7 m
+        # 代价是足印外没有软缓冲, DWB 会更贴墙; 必须真机验证。
+        # 若仍贴墙/擦边, 优先改用 footprint 多边形 + 适度回调到 0.25,
+        # 不要继续减小 robot_radius。
+        inflation_radius: 0.20
+      # 2026-10-31: 局部障碍改为"地形相对高度"的两路观测。
+      # pointlio_cloud_relay/ground_filter 在重力对齐的 camera_init 下按
+      # "离局部地面的高度"拆分 /cloud_registered:
+      #   /cloud_ground    地面点 (marking=false, clearing=true) 只负责清除
+      #   /cloud_obstacles 高于局部地面 0.15 m 的点 (marking=true) 负责避障
+      # 这样缓坡不会再因为 odom 里的绝对高度超过 min_obstacle_height 被标成
+      # 障碍; 墙/洞壁/动态障碍仍在 /cloud_obstacles 里。
+      # 旧的 /cloud_base 仍由 cloud_to_base 发布, 仅供调试/检查脚本使用。
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: ground obstacles
+        ground:
+          topic: /cloud_ground
+          data_type: "PointCloud2"
+          # 地面点只用于 raytrace 清除, 不参与 marking.
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.0
+          marking: False
+          clearing: True
+          obstacle_max_range: 6.0
+          raytrace_max_range: 10.0
+          raytrace_min_range: 0.2
+        obstacles:
+          topic: /cloud_obstacles
+          data_type: "PointCloud2"
+          # ground_filter 已保证所有点都高于局部地面 0.15 m; 这里的窗口是
+          # 相对 odom 局部地面(由 map_odom_correction 保证), 只用来丢掉
+          # 天花板/顶部结构, 不参与坡面判断。
+          min_obstacle_height: 0.0
+          max_obstacle_height: 1.0
+          marking: True
+          clearing: True
+          # local 窗口 4x4 m, 远处点本来就会落在窗外; 收紧范围只是少喂
+          # 无用观测。raytrace 必须 >= obstacle, 且覆盖整个窗口。
+          obstacle_max_range: 6.0
+          raytrace_max_range: 10.0
+          raytrace_min_range: 0.2
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      always_send_full_costmap: True
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      # 2026-11-27: update 2.0 / publish 1.25。
+      # Nav2 在 update 循环里用 `last_publish + 1/publish_frequency < now`
+      # 决定是否发布（严格小于）。update=2 Hz 时循环是 0.5 s 一拍，
+      # publish=1.0 的 1.0 s 周期正好是 2 拍；±5 ms 抖动让第 2 拍落在
+      # 0.996 s，判据失败，只能等第 3 拍 -> 实测 0.68 Hz。
+      # DEBUG 实测 update 本身只要 9 ms（2 Hz），所以把 publish 周期设为
+      # 0.8 s（1.25 Hz）：第 2 拍 ~1.0 s > 0.8，稳定每 2 拍发一次 = ~1 Hz。
+      # 注意 1.25 是"最小间隔"参数，实际发布仍是 1 Hz。
+      update_frequency: 2.0
+      publish_frequency: 1.25
+      global_frame: map
+      robot_base_frame: base_footprint
+      use_sim_time: false
+      robot_radius: 0.20
+      # 2026-10-30: 全局图对齐地形高程图(0.10m 分辨率)。
+      # (2026-11-04 改为 rolling, 见下; 地形层仍是唯一地图来源。)
+      resolution: 0.10
+      # 2026-11-04: 固定 30m 窗口 -> 60m rolling 窗口。
+      # 地形图现在随探索增长(projector auto_extent), costmap 不再需要和它
+      # 同尺寸; rolling 让视口跟着机器人走, 成本/内存有界。
+      # 视口外的地形不会丢: TraversabilityLayer 每帧从持久的
+      # /terrain_traversability 整块重写视口, 狗走回去就恢复。
+      # 未观测格在 updateOrigin 后是 NO_INFORMATION(track_unknown_space),
+      # 不会被误标成 free。
+      rolling_window: true
+      width: 60
+      height: 60
+      track_unknown_space: true
+      # 2026-10-23: static_layer 已移除。本 launch(go2_nav2_slam_explore) 不再启动
+      # map_server / slam_toolbox，没有任何节点发布 /map，StaticLayer 永远收不到
+      # 消息并每 10s 刷 "Can't update static costmap layer, no map received"。
+      # 地图来源已改为 terrain_traversability_layer(elevmap 经 bridge 桥接)。
+      # 若将来走 go2_explore_bringup(slam_toolbox 发 /map)，再把 static_layer 加回来。
+      # 2026-10-30: obstacle_layer(/scan) 移除。
+      # 2026-10-31: 重新加回点级 obstacle_layer, 但输入改为 /cloud_obstacles
+      # （ground_filter 已按局部地面过滤），用于兜住地形网格漏掉的细柱。
+      # 2026-11-10 实验 A: global 去掉 obstacle_layer。
+      # 原因: obstacle_layer 的标记是唯一"只写一次、不重算"的内容; 点云在
+      # base_footprint, 进 map 必须过 map->odom, 而 SLC 每秒会做一次优化,
+      # map->base 会在 50 ms 内跳 0.1~1.5 m (实测)。旧标记不会跟着地图重算,
+      # raytrace 也清不到, 于是在转弯/回环处拖出多个方向的重影。
+      # 地形层每周期整块重写, 自愈; 走廊墙在 terrain 里已标 lethal
+      # (这份 bag 约 1.2~1.5 万格), 细柱避障由 local costmap 兜底。
+      # 若要恢复: 把 "obstacle_layer" 加回下面列表。
+      plugins: ["terrain_traversability_layer", "inflation_layer"]
+      terrain_traversability_layer:
+        plugin: "nav2_traversability_plugin::TraversabilityLayer"
+        enabled: True
+        traversability_topic: "/terrain_traversability"
+        threshold: 0
+        # 未观测格(bridge 发 85 = UNKNOWN)怎么写进 costmap:
+        #   no_information (默认) -> 写 255 NO_INFORMATION,costmap 当"未知空间",
+        #                             planner 不会规划穿过没扫过的地
+        #   skip                   -> 不写该格,交给其它 costmap 层
+        #                             (未观测面积很大、不想饿死 planner 时用)
+        #   lethal                 -> 直接当障碍(最保守)
+        unknown_policy: "no_information"
+        # OccupancyGrid 所在 frame;留空 = 用消息自带的 frame_id。
+        # 插件会用 TF 把它变换到 costmap 的 global_frame;TF 不可用(帧名错/
+        # TF 没起来)时该帧 terrain 数据不写入 costmap,而不是错位写入。
+        grid_frame: ""
+      # 2026-10-31: 点级障碍层, 兜住 2.5D 高程网格可能漏掉的细柱和动态障碍。
+      # 输入是 ground_filter 的 /cloud_obstacles——它已经按"离局部地面
+      # 0.15~1.2 m"过滤过, 所以坡面不会进来, 门梁/天花板也不会。地形层继续
+      # 负责坡面和可通行性; 这一层只保证 15 cm 级细柱不会因为高程网格的
+      # 粗糙度/分辨率被漏掉。
+      #
+      # 2026-11-10: 已从上面的 plugins 列表移除(实验 A, 见上)。配置保留,
+      # 方便对比/回退; 不在列表里时不会被加载。
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: obstacles
+        obstacles:
+          topic: /cloud_obstacles
+          data_type: "PointCloud2"
+          marking: True
+          clearing: True
+          # ground_filter 已按局部地面过滤; 这里用宽松的绝对高度窗口,
+          # 避免坡地/高海拔处把障碍裁掉。
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.0
+          # 2026-11-10: 6 -> 11。ground_filter 的源网格是 12 m，6 m 外的旧标记
+          # 没有任何 raytrace 能清掉，幽灵障碍会一直保留到狗走到 6 m 内。
+          # 拉到 11 m 后，误标记在狗接近前就会被扫掉；同时把 0.15-1.2 m 低
+          # 障碍的全局覆盖从 6 m 扩到 11 m。
+          obstacle_max_range: 11.0
+          raytrace_max_range: 11.0
+          raytrace_min_range: 0.2
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # 2026-10-31 Phase 0: 与 local 同步 0.35 -> 0.20（1.5 m 洞窟）。
+        # global 只负责粗通道; 0.20 给 1.5 m 洞保留 0.7 m 自由宽度。
+        # 若规划贴墙, 可单独回调到 0.25; 但 global 不应小于 local,
+        # 否则 global 会选 local 认为过窄的通道。
+        cost_scaling_factor: 8.0
+        inflation_radius: 0.20
+      always_send_full_costmap: True
+
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    # Overridden in launch by the "map" launch configuration or provided default value.
+    # To use in yaml, remove the default "map" value in the tb3_simulation_launch.py file & provide full path to map below.
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: false
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.70     #0.65
+    map_subscribe_transient_local: True
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 15.0
+    use_sim_time: false
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.7
+      use_astar: false
+      # 2026-10-31: false -> true。Mid360S blind=0.35 m + 13° 下倾, 地面最近
+      # 返回约 1.07 m, 机器人脚下与周围一圈在 terrain 里必然是 UNKNOWN(85);
+      # allow_unknown=false 时 NavFn 连起点都判不可通行, 任何 goal 都会
+      # "failed to create plan", 然后恢复行为反复 clear costmap/spin。
+      # true 时 NavFn 可以穿越未观测格, 与 fastlio 支原有行为一致;
+      # 未观测区不等于墙, 墙仍是 LETHAL(254), 近场安全仍由 local costmap
+      # 的 /cloud_base obstacle_layer 兜底。
+      # 更彻底的后续方案: 给地形层加"机器人足迹约 1.2 m 内强制 FREE"的小层。
+      allow_unknown: true
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: false
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 8.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    use_sim_time: false
+    simulate_ahead_time: 1.0    #1.0
+    max_rotational_vel: 2.0
+    min_rotational_vel: 0.0
+    rotational_acc_lim: 3.2
+
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: false
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: false
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 2
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    # go2_driver 发布的 /odom 未填充 twist，CLOSED_LOOP 会把速度误判为 0 导致走半步就停
+    feedback: "OPEN_LOOP"
+    # 需 >= DWB 期望速度；略放宽加减速，体感更利落
+    max_velocity: [2.0, 1.3, 2.0]
+    min_velocity: [0.0, -0.3, -1.0]
+    max_accel: [2.0, 1.3, 2.5]
+    max_decel: [-2.0, -1.3, -2.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+
+
+
+
+
+# amcl:
+#   ros__parameters:
+#     use_sim_time: False
+#     alpha1: 0.2
+#     alpha2: 0.2
+#     alpha3: 0.2
+#     alpha4: 0.2
+#     alpha5: 0.2
+#     base_frame_id: "base_link"
+#     beam_skip_distance: 0.5
+#     beam_skip_error_threshold: 0.9
+#     beam_skip_threshold: 0.3
+#     do_beamskip: false
+#     global_frame_id: "map"
+#     lambda_short: 0.1
+#     laser_likelihood_max_dist: 2.0
+#     laser_max_range: 100.0
+#     laser_min_range: -1.0
+#     laser_model_type: "likelihood_field"
+#     max_beams: 60
+#     max_particles: 2000
+#     min_particles: 500
+#     odom_frame_id: "odom"
+#     pf_err: 0.05
+#     pf_z: 0.99
+#     recovery_alpha_fast: 0.0
+#     recovery_alpha_slow: 0.0
+#     resample_interval: 1
+#     robot_model_type: "differential"
+#     save_pose_rate: 0.5
+#     sigma_hit: 0.2
+#     tf_broadcast: true
+#     transform_tolerance: 1.0
+#     update_min_a: 0.2
+#     update_min_d: 0.25
+#     z_hit: 0.5
+#     z_max: 0.05
+#     z_rand: 0.5
+#     z_short: 0.05
+#     scan_topic: scan
+
+# amcl_map_client:
+#   ros__parameters:
+#     use_sim_time: False
+
+# amcl_rclcpp_node:
+#   ros__parameters:
+#     use_sim_time: False
+
+# bt_navigator:
+#   ros__parameters:
+#     use_sim_time: False
+#     global_frame: map
+#     robot_base_frame: base_link
+#     odom_topic: /odom
+#     enable_groot_monitoring: True
+#     groot_zmq_publisher_port: 1666
+#     groot_zmq_server_port: 1667
+#     default_bt_xml_filename: "navigate_w_replanning_and_recovery.xml"
+#     plugin_lib_names:
+#     - nav2_compute_path_to_pose_action_bt_node
+#     - nav2_follow_path_action_bt_node
+#     - nav2_back_up_action_bt_node
+#     - nav2_spin_action_bt_node
+#     - nav2_wait_action_bt_node
+#     - nav2_clear_costmap_service_bt_node
+#     - nav2_is_stuck_condition_bt_node
+#     - nav2_goal_reached_condition_bt_node
+#     - nav2_goal_updated_condition_bt_node
+#     - nav2_initial_pose_received_condition_bt_node
+#     - nav2_reinitialize_global_localization_service_bt_node
+#     - nav2_rate_controller_bt_node
+#     - nav2_distance_controller_bt_node
+#     - nav2_speed_controller_bt_node
+#     - nav2_truncate_path_action_bt_node
+#     - nav2_goal_updater_node_bt_node
+#     - nav2_recovery_node_bt_node
+#     - nav2_pipeline_sequence_bt_node
+#     - nav2_round_robin_node_bt_node
+#     - nav2_transform_available_condition_bt_node
+#     - nav2_time_expired_condition_bt_node
+#     - nav2_distance_traveled_condition_bt_node
+
+# bt_navigator_rclcpp_node:
+#   ros__parameters:
+#     use_sim_time: False
+
+# controller_server:
+#   ros__parameters:
+#     use_sim_time: False
+#     controller_frequency: 20.0
+#     min_x_velocity_threshold: 0.001
+#     min_y_velocity_threshold: 0.5
+#     min_theta_velocity_threshold: 0.001
+#     progress_checker_plugin: "progress_checker"
+#     goal_checker_plugin: "goal_checker"
+#     controller_plugins: ["FollowPath"]
+
+#     # Progress checker parameters
+#     progress_checker:
+#       plugin: "nav2_controller::SimpleProgressChecker"
+#       required_movement_radius: 0.5
+#       movement_time_allowance: 10.0
+#     # Goal checker parameters
+#     goal_checker:
+#       plugin: "nav2_controller::SimpleGoalChecker"
+#       xy_goal_tolerance: 0.25
+#       yaw_goal_tolerance: 0.25
+#       stateful: True
+#     # DWB parameters
+#     FollowPath:
+#       plugin: "dwb_core::DWBLocalPlanner"
+#       debug_trajectory_details: True
+#       min_vel_x: 0.0
+#       min_vel_y: 0.0
+#       max_vel_x: 3.0 #changed
+#       max_vel_y: 0.0
+#       max_vel_theta: 1.5 #changed
+#       min_speed_xy: 0.0
+#       max_speed_xy: 3.0 #changed
+#       min_speed_theta: 0.0
+#       # Add high threshold velocity for turtlebot 3 issue.
+#       # https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues/75
+#       acc_lim_x: 10.0
+#       acc_lim_y: 0.0
+#       acc_lim_theta: 5.0
+#       decel_lim_x: -2.5
+#       decel_lim_y: 0.0
+#       decel_lim_theta: -3.2
+#       vx_samples: 20
+#       vy_samples: 5
+#       vtheta_samples: 20
+#       sim_time: 1.7
+#       linear_granularity: 0.05
+#       angular_granularity: 0.025
+#       transform_tolerance: 0.2
+#       xy_goal_tolerance: 0.25
+#       trans_stopped_velocity: 0.25
+#       short_circuit_trajectory_evaluation: True
+#       stateful: True
+#       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+#       BaseObstacle.scale: 0.02
+#       PathAlign.scale: 32.0
+#       PathAlign.forward_point_distance: 0.1
+#       GoalAlign.scale: 24.0
+#       GoalAlign.forward_point_distance: 0.1
+#       PathDist.scale: 32.0
+#       GoalDist.scale: 24.0
+#       RotateToGoal.scale: 32.0
+#       RotateToGoal.slowing_factor: 5.0
+#       RotateToGoal.lookahead_time: -1.0
+
+# controller_server_rclcpp_node:
+#   ros__parameters:
+#     use_sim_time: False
+
+# local_costmap:
+#   local_costmap:
+#     ros__parameters:
+#       update_frequency: 10.0
+#       publish_frequency: 10.0
+#       global_frame: odom
+#       robot_base_frame: base_link
+#       use_sim_time: False
+#       rolling_window: true
+#       width: 3
+#       height: 3
+#       resolution: 0.05
+#       robot_radius: 0.22
+#       plugins: ["voxel_layer", "inflation_layer"]
+#       inflation_layer:
+#         plugin: "nav2_costmap_2d::InflationLayer"
+#         cost_scaling_factor: 3.0
+#         inflation_radius: 0.55
+#       voxel_layer:
+#         plugin: "nav2_costmap_2d::VoxelLayer"
+#         enabled: True
+#         publish_voxel_map: True
+#         origin_z: 0.0
+#         z_resolution: 0.05
+#         z_voxels: 16
+#         max_obstacle_height: 2.0
+#         mark_threshold: 0
+#         observation_sources: scan
+#         scan:
+#           topic: /scan
+#           max_obstacle_height: 2.0
+#           clearing: True
+#           marking: True
+#           data_type: "LaserScan"
+#       static_layer:
+#         map_subscribe_transient_local: True
+#       always_send_full_costmap: True
+#   local_costmap_client:
+#     ros__parameters:
+#       use_sim_time: False
+#   local_costmap_rclcpp_node:
+#     ros__parameters:
+#       use_sim_time: False
+
+# global_costmap:
+#   global_costmap:
+#     ros__parameters:
+#       update_frequency: 1.0
+#       publish_frequency: 1.0
+#       global_frame: map
+#       robot_base_frame: base_link
+#       use_sim_time: False
+#       robot_radius: 0.22
+#       resolution: 0.05
+#       track_unknown_space: true
+#       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+#       obstacle_layer:
+#         plugin: "nav2_costmap_2d::ObstacleLayer"
+#         enabled: True
+#         observation_sources: scan
+#         scan:
+#           topic: /scan
+#           max_obstacle_height: 2.0
+#           clearing: True
+#           marking: True
+#           data_type: "LaserScan"
+#       static_layer:
+#         plugin: "nav2_costmap_2d::StaticLayer"
+#         map_subscribe_transient_local: True
+#       inflation_layer:
+#         plugin: "nav2_costmap_2d::InflationLayer"
+#         cost_scaling_factor: 3.0
+#         inflation_radius: 0.55
+#       always_send_full_costmap: True
+#   global_costmap_client:
+#     ros__parameters:
+#       use_sim_time: False
+#   global_costmap_rclcpp_node:
+#     ros__parameters:
+#       use_sim_time: False
+
+# map_server:
+#   ros__parameters:
+#     use_sim_time: False
+#     yaml_filename: "turtlebot3_world.yaml"
+
+# map_saver:
+#   ros__parameters:
+#     use_sim_time: False
+#     save_map_timeout: 5000
+#     free_thresh_default: 0.25
+#     occupied_thresh_default: 0.65
+#     map_subscribe_transient_local: False
+
+# planner_server:
+#   ros__parameters:
+#     expected_planner_frequency: 20.0
+#     use_sim_time: False
+#     planner_plugins: ["GridBased"]
+#     GridBased:
+#       plugin: "nav2_navfn_planner/NavfnPlanner"
+#       tolerance: 0.5
+#       use_astar: false
+#       allow_unknown: true
+
+# planner_server_rclcpp_node:
+#   ros__parameters:
+#     use_sim_time: False
+
+# recoveries_server:
+#   ros__parameters:
+#     costmap_topic: local_costmap/costmap_raw
+#     footprint_topic: local_costmap/published_footprint
+#     cycle_frequency: 10.0
+#     recovery_plugins: ["spin", "back_up", "wait"]
+#     spin:
+#       plugin: "nav2_recoveries/Spin"
+#     back_up:
+#       plugin: "nav2_recoveries/BackUp"
+#     wait:
+#       plugin: "nav2_recoveries/Wait"
+#     global_frame: odom
+#     robot_base_frame: base_link
+#     transform_timeout: 0.1
+#     use_sim_time: False
+#     simulate_ahead_time: 2.0
+#     max_rotational_vel: 1.0
+#     min_rotational_vel: 0.4
+#     rotational_acc_lim: 3.2
+
+# robot_state_publisher:
+#   ros__parameters:
+#     use_sim_time: False

@@ -1,0 +1,9 @@
+std_msgs/Header header
+string mission_state
+string reason
+geometry_msgs/PoseStamped robot_pose
+geometry_msgs/PoseStamped entrance_pose
+geometry_msgs/PoseStamped current_goal
+geometry_msgs/PointStamped target_map
+uint32 junction_depth
+bool exploration_complete
