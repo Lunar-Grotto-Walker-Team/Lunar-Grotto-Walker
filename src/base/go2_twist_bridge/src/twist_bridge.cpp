@@ -2,6 +2,9 @@
 #include "unitree_api/msg/request.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "sport_model.hpp"
+// 用本包自带的 nlohmann/json 3.11.2（include/nlohmann/），不是系统 apt 的
+// 3.10.5：引号形式 + 本包的 -I 会优先命中本地副本。若要改成
+// find_package(nlohmann_json) 走系统版本，先确认用到的 API 在 3.10.5 里齐全。
 #include "nlohmann/json.hpp"
 
 #include <algorithm>
